@@ -1,0 +1,260 @@
+/* ============================================================
+   待办回看 —— 独立日历悬浮弹窗
+   明亮简约 + 珊瑚红主题，与主窗口一致
+   ============================================================ */
+
+:root {
+  --accent: #ff6b5e;
+  --accent-strong: #f25244;
+  --accent-soft: rgba(255, 107, 94, 0.14);
+  --bg: #ffffff;
+  --text: #23262f;
+  --text-muted: #9aa0ac;
+  --border: #eef0f4;
+  --shadow: 0 8px 28px rgba(31, 36, 48, 0.16);
+  --radius: 16px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  background: transparent; /* 透明窗口 */
+}
+
+body {
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI',
+    -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--text);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.calendar-window {
+  height: 100%;
+  width: 100%;
+  background: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 16px 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部拖动条 */
+.calendar-drag {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  cursor: grab;
+}
+
+.calendar-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.5px;
+  pointer-events: none;
+}
+
+.calendar-close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+
+.calendar-close:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+/* 月份导航 */
+.cal-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.cal-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cal-nav {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  font-family: inherit;
+  transition: color 0.15s, background 0.15s;
+}
+
+.cal-nav:hover {
+  color: var(--text);
+  background: var(--border);
+}
+
+/* 星期表头 */
+.cal-weekdays {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.cal-weekday {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+/* 日期网格 */
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.cal-day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--text);
+  background: #fafbfc;
+  position: relative;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cal-day:hover {
+  background: var(--accent-soft);
+}
+
+.cal-day.other-month {
+  color: #c2c7d1;
+  background: transparent;
+  cursor: default;
+}
+
+.cal-day.today {
+  border: 1.5px solid var(--accent);
+  font-weight: 700;
+}
+
+.cal-day.selected {
+  background: var(--accent);
+  color: #fff;
+}
+
+.cal-day.has-todo::after {
+  content: '';
+  position: absolute;
+  bottom: 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.cal-day.all-done::after {
+  background: #4caf7d;
+}
+
+/* 选中日期详情 */
+.cal-detail {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.cal-detail-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.cal-detail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.cal-detail-item.done {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.cal-detail-mark {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  border: 1.5px solid #d0d4dc;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #fff;
+}
+
+.cal-detail-item.done .cal-detail-mark {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.cal-detail-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d8dce3;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

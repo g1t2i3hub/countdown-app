@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="o5D0FAKpc8dkuM3KbXS2vz">
+<head data-page-node-id="OGdumkjr4n7rGOefOIE2DO">
+  <meta charset="UTF-8" data-page-node-id="5DAmGPp1JB31OOMv0zVh71" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="C7BHYcoAOnhs68dFhL3CZA" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" data-page-node-id="EkKUY3IHBJZK8jl3C7eL8j" />
+  <title>倒数日</title>
+  <link rel="stylesheet" href="styles.css" data-page-node-id="R95TBu4BwxRL6NnRcAz9eb" />
+</head>
+<body data-page-node-id="5UnDduRoNt3Ah83jHVgYgR">
+  <!-- 整块是透明窗口；内部悬浮条置顶，下拉面板通过 hover 在窗口内滑出 -->
+  <div class="stage" id="stage" data-page-node-id="eF9Wz0vnitNw4KPxVBLQsE">
+    <!-- 悬浮条（常驻显示） -->
+    <div class="float-bar" id="float-bar" data-page-node-id="lKT4i1qsC0hup8i00sWrzx">
+      <div class="float-drag" data-page-node-id="GhMyLPkUinzoylhQsc8oCa">
+        <span class="float-days" id="float-days" data-page-node-id="18OCCCw6sSVeQgRdoemgYj">--</span>
+        <span class="float-unit" id="float-unit" data-page-node-id="ikyQQlHV7jcmukgYS2dF7S">天</span>
+      </div>
+      <button class="float-eliminate" id="float-eliminate-btn" data-page-node-id="Iv2Y6jYpbmgW1ADcA11na3">忍忍就过去了！</button>
+      <span class="float-chevron" data-page-node-id="b1H8M9hg1BYo4qITOcGx0H">▾</span>
+    </div>
+
+    <!-- 下拉面板（hover 悬浮条/面板时滑出） -->
+    <div class="dropdown-panel" id="dropdown-panel" data-page-node-id="efVfAvW2C5TFeHcuzut85I">
+      <p class="message-text" id="message-text" data-page-node-id="AdFB9FiToJafJYgVHsEQNa"></p>
+
+      <div class="number-wrap" data-page-node-id="BS4ZaOb8u5ehZ6s3xXtBmu">
+        <span class="number" id="remaining-days" data-page-node-id="svuAi8kRwlxr2ugMeDDQAz">0</span>
+        <span class="number-unit" id="number-unit" data-page-node-id="9xOtCGjh5ZyHakv950EwOp">天</span>
+      </div>
+
+      <button class="btn-eliminate" id="eliminate-btn" data-page-node-id="aRCCHkU7NCfXSqzvv4ECPP">忍忍就过去了！</button>
+
+      <!-- 今日待办 -->
+      <div class="todo-section" id="todo-section" data-page-node-id="todoSection0000000000000001">
+        <div class="todo-add-row" data-page-node-id="todoAddRow000000000000000001">
+          <input id="todo-input" class="input todo-input" type="text"
+                 placeholder="添加今日待办…" autocomplete="off" maxlength="80" data-page-node-id="todoInput000000000000000001" />
+          <button id="todo-add-btn" class="btn todo-add-btn" type="button" data-page-node-id="todoAddBtn000000000000000001">＋</button>
+        </div>
+        <ul class="todo-list" id="todo-list" data-page-node-id="todoList000000000000000001"></ul>
+        <div class="todo-empty" id="todo-empty" data-page-node-id="todoEmpty000000000000000001">今天还没有待办</div>
+
+        <!-- 日历回看（点击打开独立悬浮弹窗） -->
+        <button class="todo-calendar-toggle" id="todo-calendar-toggle" type="button" data-page-node-id="todoCalToggle000000000000001">
+          <span data-page-node-id="todoCalToggleLabel0000000001">📅 回看历史</span>
+        </button>
+      </div>
+
+      <button class="history-toggle" id="history-toggle" type="button" data-page-node-id="aScyCaRopE0yamzX47pD8A">
+        <span data-page-node-id="C5bFMWXbthWsE1nbgJcTD9">历史记录</span>
+        <span class="history-toggle-chevron" id="history-toggle-chevron" data-page-node-id="LzV0ObUVD7raD5C0O0Gwsc">▾</span>
+      </button>
+      <div class="history-panel hidden" id="history-panel" data-page-node-id="ltX5w9zrwxHRCnxmyhBlqo">
+        <ul class="history-list hidden" id="history-list" data-page-node-id="jTq5dKjhNtQ9qqGp3UCdr6"></ul>
+        <div class="history-empty" id="history-empty" data-page-node-id="IPwvnlBMxLzQMO4MoX1j6D">还没有消除记录</div>
+        <div class="history-actions" data-page-node-id="xQVUjqzLZyjkFMYvGp6r3J">
+          <button class="btn-ghost" id="reset-history-btn" data-page-node-id="YVwHAtHyHjdv4ERftFVMcP">重置</button>
+          <button class="btn-ghost" id="edit-settings-btn" data-page-node-id="twEAzVCsZgTeDq2wrMpUlg">修改设置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置 / 引导界面（未配置时显示，占满窗口） -->
+  <section class="setup-view hidden" id="setup-view" data-page-node-id="XPL02H2yGq8LQeMDr5nAdx">
+    <div class="setup-drag" data-page-node-id="tbBSvvkoa9Lzf8tEnkfBPX">
+      <span class="panel-title" data-page-node-id="SsxRGrvUSMlPMABBnKcgIR">倒数日</span>
+    </div>
+    <h1 class="setup-title" data-page-node-id="F8dMRR61iu9iADPwHK6xAv">开始你的倒计时</h1>
+
+    <label class="field" data-page-node-id="m51utSGuECcqG7OAP1mZ1n">
+      <span class="field-label" data-page-node-id="I7dzt2rWgGhcubENKD0OVC">目标日期</span>
+      <input id="target-date-input" class="input" type="date"
+             autocomplete="off" data-page-node-id="hqWN9RABOL6bT9xVHnLiks" />
+      <span class="field-hint" id="target-date-hint" data-page-node-id="targetDateHint00000000000001"></span>
+    </label>
+
+    <label class="field" data-page-node-id="displayModeField00000000000001">
+      <span class="field-label" data-page-node-id="displayModeLabel00000000000001">剩余时间显示方式</span>
+      <select id="display-mode-select" class="input select" data-page-node-id="displayModeSelect00000000000001">
+        <option value="days">仅天数（如 100 天）</option>
+        <option value="months">月 + 天（如 3 个月 10 天）</option>
+        <option value="years">年 + 月 + 天（如 1 年 2 个月 5 天）</option>
+      </select>
+    </label>
+
+    <label class="field" data-page-node-id="WQOpngScZ1d4G8dgjXXbx1">
+      <span class="field-label" data-page-node-id="VEfFIjlMGAP3A78TYkZeq3">含义</span>
+      <input id="message-input" class="input" type="text"
+             placeholder="距离完成还有 X 天" autocomplete="off" data-page-node-id="7zpNwgCJqTBQgwMYBW3Tnf" />
+    </label>
+
+    <label class="field" data-page-node-id="btnActiveField0000000000000001">
+      <span class="field-label" data-page-node-id="btnActiveLabel0000000000000001">按钮文字（未消除时）</span>
+      <input id="btn-active-text-input" class="input" type="text"
+             placeholder="忍忍就过去了！" autocomplete="off" maxlength="20" data-page-node-id="btnActiveInput0000000000000001" />
+    </label>
+
+    <label class="field" data-page-node-id="btnDoneField00000000000000001">
+      <span class="field-label" data-page-node-id="btnDoneLabel00000000000000001">按钮文字（已消除后）</span>
+      <input id="btn-done-text-input" class="input" type="text"
+             placeholder="牛逼，又活一天！" autocomplete="off" maxlength="20" data-page-node-id="btnDoneInput00000000000000001" />
+    </label>
+
+    <button id="save-settings-btn" class="btn btn-primary" data-page-node-id="tsF9bx8oOw9ehHg1GDScfw">保存</button>
+    <button id="cancel-edit-btn" class="btn btn-ghost hidden" data-page-node-id="C4hvHJV0IEVfkND5l8C3VY">取消</button>
+
+    <p id="setup-error" class="error-text" data-page-node-id="oPXjg8dtW0PGBwBdsUFNj0"></p>
+  </section>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,705 @@
+/* ============================================================
+   倒数日 —— 悬浮条 + 点击展开下拉面板（纯 CSS class 切换，不缩放窗口）
+   透明窗口：收起态只显示顶部悬浮条，其余透明
+   点击悬浮条（消除按钮除外）切换下拉面板展开/收起
+   ============================================================ */
+
+:root {
+  --accent: #ff6b5e;
+  --accent-strong: #f25244;
+  --accent-soft: rgba(255, 107, 94, 0.14);
+  --bg: #ffffff;
+  --text: #23262f;
+  --text-muted: #9aa0ac;
+  --border: #eef0f4;
+  --shadow: 0 8px 28px rgba(31, 36, 48, 0.16);
+  --radius: 16px;
+  --bar-h: 60px; /* 悬浮条高度，须与 main.js BAR_HEIGHT 一致 */
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  background: transparent; /* 透明窗口关键 */
+}
+
+body {
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI',
+    -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--text);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ---------------- 拖拽区域（无边框窗口移动） ----------------
+ * 说明：不再使用 -webkit-app-region: drag（在 Windows 上会间歇性吞掉
+ * 输入框的点击/焦点，导致输入失灵）。窗口拖动改由主进程 mousedown + IPC 实现。
+ * 这里仅保留视觉上的 cursor 提示。
+ */
+.float-drag,
+.setup-drag {
+  cursor: grab;
+}
+
+.setup-drag {
+  cursor: grab;
+}
+
+/* ============================================================
+   舞台：透明窗口内的布局容器
+   ============================================================ */
+.stage {
+  height: 100%;
+  width: 100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* ============================================================
+   悬浮条（常驻顶部）
+   ============================================================ */
+.float-bar {
+  height: var(--bar-h);
+  flex: 0 0 var(--bar-h);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 16px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  position: relative;
+  z-index: 2;
+}
+
+.float-drag {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  cursor: grab;
+}
+
+.float-days {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 月/年显示方式下悬浮条文字较长，缩小字号 */
+.float-days.is-text {
+  font-size: 15px;
+  font-variant-numeric: normal;
+}
+
+.float-unit {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.float-eliminate {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.float-eliminate:hover {
+  background: var(--accent-strong);
+}
+
+.float-eliminate:active {
+  transform: scale(0.96);
+}
+
+.float-eliminate.disabled {
+  background: #e9ebef;
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.float-chevron {
+  color: var(--text-muted);
+  font-size: 13px;
+  width: 20px;
+  text-align: center;
+  transition: transform 0.25s ease;
+}
+
+/* ============================================================
+   下拉面板（默认收起，hover 时滑出）
+   ============================================================ */
+.dropdown-panel {
+  position: relative;
+  z-index: 1;
+  margin-top: 8px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+
+  /* 默认收起：向上平移、透明、不可见，但不占交互 */
+  transform: translateY(-12px);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+/* 点击悬浮条展开（由 JS 给 .stage 加 .open class） */
+.stage.open .dropdown-panel {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 展开时 chevron 翻转 */
+.stage.open .float-chevron {
+  transform: rotate(180deg);
+}
+
+/* 含义文字（突出） */
+.message-text {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.5;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+/* 剩余天数（超大） */
+.number-wrap {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0 18px;
+}
+
+.number {
+  font-size: 76px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+/* 月/年显示方式下文本较长，缩小字号、放宽字距 */
+.number.is-text {
+  font-size: 40px;
+  letter-spacing: 0;
+  font-variant-numeric: normal;
+}
+
+.number.bounce {
+  animation: number-bounce 0.6s cubic-bezier(0.28, 0.84, 0.42, 1);
+}
+
+@keyframes number-bounce {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.08); color: var(--accent-strong); }
+  70% { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}
+
+.number-unit {
+  font-size: 18px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* 消除按钮 */
+.btn-eliminate {
+  width: 100%;
+  border: none;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 8px 20px var(--accent-soft);
+  transition: background 0.15s, transform 0.1s;
+}
+
+.btn-eliminate:hover {
+  background: var(--accent-strong);
+}
+
+.btn-eliminate:active {
+  transform: scale(0.98);
+}
+
+.btn-eliminate.disabled {
+  background: #e9ebef;
+  color: var(--text-muted);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* 今日待办 */
+.todo-section {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.todo-add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.todo-input {
+  flex: 1;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
+.todo-add-btn {
+  flex: 0 0 auto;
+  width: 38px;
+  padding: 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 1;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+
+.todo-add-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.todo-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fafbfc;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.todo-item.done {
+  background: #f0f1f4;
+  opacity: 0.7;
+}
+
+.todo-check {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #d0d4dc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #fff;
+  transition: background 0.15s, border-color 0.15s;
+  padding: 0;
+  font-family: inherit;
+}
+
+.todo-check.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.todo-text {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.todo-item.done .todo-text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.todo-delete {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  font-family: inherit;
+}
+
+.todo-item:hover .todo-delete {
+  opacity: 1;
+}
+
+.todo-delete:hover {
+  color: var(--accent-strong);
+}
+
+.todo-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+/* 遗留标签（昨天未完成顺延到今天） */
+.todo-carried-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: #c9872f;
+  background: rgba(201, 135, 47, 0.14);
+  padding: 2px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* 日历回看 */
+.todo-calendar-toggle {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 8px;
+  transition: color 0.15s;
+}
+
+.todo-calendar-toggle:hover {
+  color: var(--text);
+}
+
+/* 历史记录 */
+.history-toggle {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 10px 8px;
+  transition: color 0.15s;
+}
+
+.history-toggle:hover {
+  color: var(--text);
+}
+
+.history-toggle-chevron {
+  display: inline-block;
+  font-size: 12px;
+  transition: transform 0.25s ease;
+}
+
+.history-toggle.open .history-toggle-chevron {
+  transform: rotate(180deg);
+}
+
+.history-panel {
+  min-height: 0;
+  margin-top: 4px;
+}
+
+.history-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fafbfc;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.history-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.history-date {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.history-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 16px 0;
+}
+
+.history-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.history-actions .btn-ghost {
+  flex: 1;
+}
+
+/* ============================================================
+   设置 / 引导界面（占满窗口）
+   ============================================================ */
+.setup-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 18px 20px;
+  overflow-y: auto;
+}
+
+.setup-drag {
+  flex: 0 0 auto;
+  height: 40px;
+  line-height: 40px;
+  padding: 0;
+  cursor: grab;
+}
+
+.setup-drag .panel-title {
+  pointer-events: none;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+.setup-title {
+  font-size: 22px;
+  font-weight: 800;
+  text-align: center;
+  margin: 8px 0 22px;
+  letter-spacing: 1px;
+}
+
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.field-hint {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.field-hint.error {
+  color: var(--accent);
+}
+
+.input {
+  width: 100%;
+  background: #fafbfc;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  padding: 11px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  user-select: text;
+}
+
+.input::placeholder {
+  color: #c2c7d1;
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* 下拉选择框（显示方式等） */
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 36px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 12px 18px;
+  transition: transform 0.15s, background 0.2s;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 6px 16px var(--accent-soft);
+}
+
+.btn-primary:hover {
+  background: var(--accent-strong);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.btn-ghost:hover {
+  color: var(--text);
+  background: var(--border);
+}
+
+.error-text {
+  color: var(--accent-strong);
+  font-size: 12px;
+  margin-top: 10px;
+  min-height: 16px;
+  text-align: center;
+}
+
+/* ---------------- 粒子特效（克制柔和） ---------------- */
+.particle {
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 999;
+  animation-name: particle-burst;
+  animation-timing-function: ease-out;
+  animation-fill-mode: forwards;
+}
+
+@keyframes particle-burst {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(0);
+    opacity: 0;
+  }
+}
+
+/* ---------------- 滚动条 ---------------- */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d8dce3;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
