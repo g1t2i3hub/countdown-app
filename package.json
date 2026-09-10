@@ -80,7 +80,7 @@
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "${productName}-${version}-portable.${ext}"
+      "artifactName": "countdown-app-${version}-portable.${ext}"
     }
   }
 }
