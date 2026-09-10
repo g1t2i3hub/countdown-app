@@ -19,7 +19,7 @@ const fs = require('fs');
  * 透明窗口让收起态看起来只是一个悬浮条，悬停时下拉面板在窗口内滑出。
  */
 const BAR_HEIGHT = 60;          // 悬浮条高度
-const WINDOW_SIZE = { width: 300, height: 560 };
+const WINDOW_SIZE = { width: 300, height: 640 };
 const CALENDAR_SIZE = { width: 360, height: 440 }; // 日历回看弹窗尺寸
 
 /** 数据版本号：任何不等于 2 的存量数据启动时会被清空重建 */
@@ -45,7 +45,8 @@ const DEFAULT_STATE = {
   todosByDate: {}, // 按日期分组的待办：{ "YYYY-MM-DD": [{ id, text, done, carried, categoryId }] }
   btnActiveText: '',  // 按钮「未打卡」时文字（兼容旧数据；新数据以类目级为准）
   btnDoneText: '',     // 按钮「已打卡」时文字（兼容旧数据；新数据以类目级为准）
-  displayMode: 'days'  // 剩余时间显示方式：'days' | 'months' | 'years'
+  displayMode: 'days', // 剩余时间显示方式：'days' | 'months' | 'years'
+  alarms: []           // 闹钟列表：[{ id, type: 'countdown'|'fixed', label, repeat: 'once'|'daily', endsAt, time, active }]
 };
 
 let mainWindow = null;
@@ -53,6 +54,9 @@ let calendarWindow = null;
 let dataFilePath = null;
 let tray = null;        // 系统托盘图标（常驻，避免被 GC 回收导致图标消失）
 let isQuitting = false; // 是否正在真正退出应用（用于区分「关闭窗口=隐藏」与「托盘退出」）
+let alarmTimer = null;  // 闹钟检查定时器
+let alarmWindow = null; // 闹钟提醒弹窗
+const alarmTriggeredIds = new Set(); // 已触发待确认的闹钟 id（避免重复弹窗）
 
 /**
  * 返回今天的日期字符串（本地时区），格式：YYYY-MM-DD
@@ -146,6 +150,7 @@ function normalizeState(state) {
   if (!s.todosByDate || typeof s.todosByDate !== 'object' || Array.isArray(s.todosByDate)) {
     s.todosByDate = {};
   }
+  if (!Array.isArray(s.alarms)) s.alarms = [];
 
   // 类目字段兜底（旧类目缺字段时补齐）
   s.categories = s.categories.map((c) => ({
@@ -292,6 +297,27 @@ function formatRemaining(remainingDays, mode) {
 }
 
 /**
+ * 计算定点闹钟（HH:MM）下一次触发的时间戳。
+ * 若今天的该时刻已过，则返回明天的同一时刻。
+ * @param {string} time 格式 HH:MM
+ * @returns {number} 时间戳（毫秒）；非法输入返回 0
+ */
+function nextFixedTimestamp(time) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(time || ''));
+  if (!m) return 0;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return 0;
+
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, min, 0, 0);
+  if (target.getTime() <= now.getTime()) {
+    target.setDate(target.getDate() + 1);
+  }
+  return target.getTime();
+}
+
+/**
  * 由原始状态构建「视图模型」，把派生字段一次性计算好交给渲染进程。
  * @param {object} state
  * @returns {object}
@@ -333,6 +359,24 @@ function buildViewModel(state) {
     };
   });
 
+  // 闹钟：附加派生字段（倒计时剩余秒数 / 定点下次触发时间戳），供渲染进程实时显示
+  const now = Date.now();
+  const alarms = (Array.isArray(state.alarms) ? state.alarms : []).map((a) => {
+    if (a.type === 'countdown') {
+      return {
+        ...a,
+        endsAt: Number(a.endsAt) || 0,
+        remainingSeconds: Math.max(Math.ceil(((Number(a.endsAt) || 0) - now) / 1000), 0)
+      };
+    }
+    // 定点闹钟：计算今天该时刻的时间戳（可能已过）
+    return {
+      ...a,
+      time: String(a.time || ''),
+      nextAt: nextFixedTimestamp(String(a.time || ''))
+    };
+  });
+
   return {
     configured: totalDays > 0,
     totalDays,
@@ -355,7 +399,8 @@ function buildViewModel(state) {
     currentCategoryCheckedToday,
     todos,
     todosByDate,
-    todoDates
+    todoDates,
+    alarms
   };
 }
 
@@ -545,6 +590,151 @@ function openCalendarWindow() {
   calendarWindow.on('closed', () => {
     calendarWindow = null;
   });
+}
+
+/**
+ * 打开闹钟提醒弹窗：居中显示「闹钟提醒」+ 标签 + 确认按钮。
+ * 弹窗复用无边框透明窗口，点击「知道了」关闭。
+ * @param {object} alarm 触发的闹钟
+ */
+function openAlarmWindow(alarm) {
+  if (alarmWindow && !alarmWindow.isDestroyed()) {
+    alarmWindow.close();
+  }
+
+  alarmWindow = new BrowserWindow({
+    width: 320,
+    height: 200,
+    title: '闹钟提醒',
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  alarmWindow.setMenuBarVisibility(false);
+  if (process.platform === 'win32') {
+    alarmWindow.setAlwaysOnTop(true, 'screen-saver');
+  }
+
+  alarmWindow.loadFile(path.join(__dirname, 'alarm.html'), {
+    query: { label: alarm.label || '闹钟', type: alarm.type }
+  });
+
+  alarmWindow.once('ready-to-show', () => {
+    // 居中显示
+    const display = screen.getPrimaryDisplay();
+    const { x, y, width, height } = display.workArea;
+    const [wx, wy] = [320, 200];
+    alarmWindow.setBounds({
+      x: Math.round(x + (width - wx) / 2),
+      y: Math.round(y + (height - wy) / 2)
+    });
+    alarmWindow.show();
+    alarmWindow.focus();
+  });
+
+  alarmWindow.on('closed', () => {
+    alarmWindow = null;
+  });
+}
+
+/**
+ * 关闭闹钟提醒弹窗。
+ */
+function closeAlarmWindow() {
+  if (alarmWindow && !alarmWindow.isDestroyed()) {
+    alarmWindow.close();
+  }
+}
+
+/**
+ * 每秒检查闹钟是否到期。
+ * - 倒计时闹钟：endsAt <= now 时触发
+ * - 定点闹钟：当前时刻匹配 time 时触发（每天重复或单次）
+ * 触发后：弹提醒窗 + 通知渲染进程闪烁悬浮条；单次闹钟自动停用。
+ */
+function checkAlarms() {
+  const state = readState();
+  const alarms = Array.isArray(state.alarms) ? state.alarms : [];
+  const now = Date.now();
+  const nowHHMM = [new Date().getHours(), new Date().getMinutes()]
+    .map((n) => String(n).padStart(2, '0'))
+    .join(':');
+  let changed = false;
+  let triggeredAny = false;
+
+  const newAlarms = alarms.map((a) => {
+    if (!a.active) return a;
+
+    let shouldTrigger = false;
+    if (a.type === 'countdown') {
+      shouldTrigger = (Number(a.endsAt) || 0) > 0 && now >= (Number(a.endsAt) || 0);
+    } else if (a.type === 'fixed') {
+      shouldTrigger = String(a.time || '') === nowHHMM;
+    }
+
+    if (shouldTrigger && !alarmTriggeredIds.has(a.id)) {
+      triggeredAny = true;
+      // 弹窗 + 悬浮条闪烁
+      openAlarmWindow(a);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('alarm-triggered', { id: a.id, label: a.label });
+      }
+      alarmTriggeredIds.add(a.id);
+
+      // 单次闹钟触发后停用
+      if (a.repeat === 'once') {
+        changed = true;
+        return { ...a, active: false };
+      }
+    }
+
+    // 定点每天重复：触发后本分钟内不再重复（通过 alarmTriggeredIds 去重，跨分钟自动清除）
+    return a;
+  });
+
+  // 清理已过期分钟的触发标记（定点闹钟跨分钟后可再次触发）
+  if (newAlarms.length > 0 && alarmTriggeredIds.size > 0) {
+    // 定点闹钟：只保留"当前分钟仍在触发状态"的标记；倒计时闹钟：一直保留直到用户处理
+    const toRemove = [];
+    alarmTriggeredIds.forEach((id) => {
+      const al = newAlarms.find((x) => x.id === id);
+      if (al && al.type === 'fixed' && String(al.time || '') !== nowHHMM) {
+        toRemove.push(id);
+      }
+    });
+    toRemove.forEach((id) => alarmTriggeredIds.delete(id));
+  }
+
+  if (changed) {
+    const newState = { ...state, alarms: newAlarms };
+    writeState(newState);
+  }
+
+  if (triggeredAny) {
+    // 通知渲染进程刷新闹钟列表（单次闹钟已停用）
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('alarms-updated', buildViewModel({ ...state, alarms: newAlarms }));
+    }
+  }
+}
+
+/**
+ * 启动闹钟检查定时器（每秒一次）。
+ */
+function startAlarmTimer() {
+  if (alarmTimer) return;
+  alarmTimer = setInterval(checkAlarms, 1000);
 }
 
 /**
@@ -878,6 +1068,89 @@ function registerIpcHandlers() {
     return { ok: true, view: buildViewModel(newState) };
   });
 
+  // 创建闹钟
+  // payload: { type: 'countdown'|'fixed', label, repeat: 'once'|'daily', durationSeconds, time }
+  ipcMain.handle('create-alarm', (_event, payload) => {
+    const state = readState();
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const type = p.type === 'countdown' ? 'countdown' : 'fixed';
+    const label = String(p.label || '').trim() || (type === 'countdown' ? '倒计时' : '闹钟');
+    const repeat = p.repeat === 'daily' ? 'daily' : 'once';
+
+    let alarm;
+    if (type === 'countdown') {
+      const dur = Number(p.durationSeconds);
+      if (!Number.isInteger(dur) || dur <= 0) {
+        return { ok: false, error: '请设置有效的倒计时时长', view: buildViewModel(state) };
+      }
+      alarm = {
+        id: generateId('alarm'),
+        type,
+        label,
+        repeat,
+        endsAt: Date.now() + dur * 1000,
+        time: '',
+        active: true,
+        createdAt: Date.now()
+      };
+    } else {
+      const time = String(p.time || '').trim();
+      if (!/^\d{1,2}:\d{2}$/.test(time)) {
+        return { ok: false, error: '请设置有效的提醒时刻', view: buildViewModel(state) };
+      }
+      const [h, min] = time.split(':').map(Number);
+      if (h < 0 || h > 23 || min < 0 || min > 59) {
+        return { ok: false, error: '请设置有效的提醒时刻', view: buildViewModel(state) };
+      }
+      alarm = {
+        id: generateId('alarm'),
+        type,
+        label,
+        repeat,
+        endsAt: 0,
+        time,
+        active: true,
+        createdAt: Date.now()
+      };
+    }
+
+    const alarms = [...(state.alarms || []), alarm];
+    const newState = { ...state, alarms };
+    writeState(newState);
+    return { ok: true, alarm, view: buildViewModel(newState) };
+  });
+
+  // 删除闹钟
+  ipcMain.handle('delete-alarm', (_event, id) => {
+    const state = readState();
+    const aid = String(id || '');
+    const alarms = (state.alarms || []).filter((a) => a.id !== aid);
+    alarmTriggeredIds.delete(aid);
+    const newState = { ...state, alarms };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // 暂停/恢复闹钟（切换 active）
+  ipcMain.handle('toggle-alarm', (_event, id) => {
+    const state = readState();
+    const aid = String(id || '');
+    const alarms = (state.alarms || []).map((a) =>
+      a.id === aid ? { ...a, active: !a.active } : a
+    );
+    const newState = { ...state, alarms };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // 确认闹钟提醒（关闭弹窗 + 清除触发标记）
+  ipcMain.handle('dismiss-alarm', (_event, id) => {
+    const aid = String(id || '');
+    alarmTriggeredIds.delete(aid);
+    closeAlarmWindow();
+    return { ok: true };
+  });
+
   // 新增待办（归属 categoryId；缺省回退当前类目 → 首个类目）
   ipcMain.handle('add-todo', (_event, text, categoryId) => {
     const content = String(text || '').trim();
@@ -1020,6 +1293,7 @@ app.whenReady().then(() => {
   registerIpcHandlers();
   createWindow();
   createTray();
+  startAlarmTimer(); // 启动闹钟检查
 
   // macOS：点击 Dock 图标且无窗口时重新创建窗口
   app.on('activate', () => {
@@ -1045,5 +1319,12 @@ app.on('will-quit', () => {
   if (tray) {
     tray.destroy();
     tray = null;
+  }
+  if (alarmTimer) {
+    clearInterval(alarmTimer);
+    alarmTimer = null;
+  }
+  if (alarmWindow && !alarmWindow.isDestroyed()) {
+    alarmWindow.close();
   }
 });

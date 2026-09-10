@@ -1,0 +1,67 @@
+/* 闹钟提醒弹窗样式 */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.alarm-card {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+  padding: 24px;
+}
+
+.alarm-icon {
+  font-size: 44px;
+  line-height: 1;
+}
+
+.alarm-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.alarm-label {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.alarm-btn {
+  padding: 10px 36px;
+  background: #ff6b5e;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.alarm-btn:hover {
+  background: #f05a4d;
+}
+
+.alarm-btn:active {
+  transform: scale(0.97);
+}

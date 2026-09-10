@@ -31,6 +31,24 @@ contextBridge.exposeInMainWorld('api', {
   /** 更新指定类目的文案（含义 / 按钮未消除文字 / 按钮已消除文字） */
   updateCategoryTexts: (id, texts) => ipcRenderer.invoke('update-category-texts', id, texts),
 
+  /** 创建闹钟：{ type, label, repeat, durationSeconds, time } */
+  createAlarm: (payload) => ipcRenderer.invoke('create-alarm', payload),
+
+  /** 删除闹钟 */
+  deleteAlarm: (id) => ipcRenderer.invoke('delete-alarm', id),
+
+  /** 暂停/恢复闹钟 */
+  toggleAlarm: (id) => ipcRenderer.invoke('toggle-alarm', id),
+
+  /** 确认闹钟提醒（关闭弹窗） */
+  dismissAlarm: (id) => ipcRenderer.invoke('dismiss-alarm', id),
+
+  /** 监听：闹钟触发（悬浮条闪烁） */
+  onAlarmTriggered: (cb) => ipcRenderer.on('alarm-triggered', (_e, data) => cb(data)),
+
+  /** 监听：闹钟列表更新（单次闹钟自动停用后刷新） */
+  onAlarmsUpdated: (cb) => ipcRenderer.on('alarms-updated', (_e, view) => cb(view)),
+
   /** 对指定类目打卡（每类目每天一次） */
   eliminateCategory: (categoryId) => ipcRenderer.invoke('eliminate-category', categoryId),
 

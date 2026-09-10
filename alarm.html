@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>闹钟提醒</title>
+  <link rel="stylesheet" href="alarm.css" />
+</head>
+<body>
+  <div class="alarm-card">
+    <div class="alarm-icon">⏰</div>
+    <div class="alarm-title">闹钟提醒</div>
+    <div class="alarm-label" id="alarm-label">时间到了</div>
+    <button class="alarm-btn" id="dismiss-btn" type="button">知道了</button>
+  </div>
+  <script src="alarm.js"></script>
+</body>
+</html>

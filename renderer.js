@@ -14,6 +14,7 @@ const floatBar = $('#float-bar');
 const floatDaysEl = $('#float-days');
 const floatUnitEl = $('#float-unit');
 const floatEliminateBtn = $('#float-eliminate-btn');
+const floatAlarmEl = $('#float-alarm');
 
 const messageText = $('#message-text');
 const remainingDaysEl = $('#remaining-days');
@@ -54,6 +55,24 @@ const categoryDoneTextInput = $('#category-done-text-input');
 const saveCategoryTextsBtn = $('#save-category-texts-btn');
 const cancelCategoryTextsBtn = $('#cancel-category-texts-btn');
 
+// 闹钟区
+const alarmSection = $('#alarm-section');
+const alarmList = $('#alarm-list');
+const alarmEmpty = $('#alarm-empty');
+const alarmAddBtn = $('#alarm-add-btn');
+const alarmEditView = $('#alarm-edit-view');
+const alarmTabCountdown = $('#alarm-tab-countdown');
+const alarmTabFixed = $('#alarm-tab-fixed');
+const alarmLabelInput = $('#alarm-label-input');
+const alarmCountdownField = $('#alarm-countdown-field');
+const alarmDurationInput = $('#alarm-duration-input');
+const alarmFixedField = $('#alarm-fixed-field');
+const alarmTimeInput = $('#alarm-time-input');
+const alarmRepeatSelect = $('#alarm-repeat-select');
+const saveAlarmBtn = $('#save-alarm-btn');
+const cancelAlarmBtn = $('#cancel-alarm-btn');
+const alarmError = $('#alarm-error');
+
 // ---------- 状态 ----------
 let currentState = null;
 let isAnimating = false;
@@ -64,6 +83,8 @@ let didDrag = false;   // 标记是否刚发生过拖动（用于区分「点击
 let categoryInputActive = false; // 是否正在内联输入类目名（新增/重命名），避免重复开输入框
 let editingCategoryTexts = false; // 是否正在编辑类目文案（浮层打开中）
 let editingCategoryId = '';       // 正在编辑文案的类目 id
+let alarmType = 'countdown';      // 当前新建闹钟的类型：countdown | fixed
+let alarmEditing = false;         // 是否正在新建闹钟（浮层打开中）
 
 // ---------- 工具函数 ----------
 
@@ -375,13 +396,263 @@ function handleToggleCalendar() {
   window.api.openCalendar();
 }
 
+// ---------- 闹钟 ----------
+
+/** 把秒数格式化为「X小时X分X秒」或「X分X秒」 */
+function formatAlarmDuration(totalSeconds) {
+  const s = Math.max(Number(totalSeconds) || 0, 0);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}小时${m}分${sec}秒`;
+  if (m > 0) return `${m}分${sec}秒`;
+  return `${sec}秒`;
+}
+
+/** 渲染闹钟列表 */
+function renderAlarms() {
+  const alarms = currentState ? currentState.alarms || [] : [];
+  alarmList.innerHTML = '';
+
+  if (alarms.length === 0) {
+    alarmEmpty.classList.remove('hidden');
+    alarmList.classList.add('hidden');
+    return;
+  }
+
+  alarmEmpty.classList.add('hidden');
+  alarmList.classList.remove('hidden');
+
+  alarms.forEach((alarm) => {
+    const item = document.createElement('div');
+    item.className = 'alarm-item' + (alarm.active ? '' : ' paused');
+
+    // 图标
+    const icon = document.createElement('span');
+    icon.className = 'alarm-item-icon';
+    icon.textContent = alarm.type === 'countdown' ? '⏳' : '⏰';
+
+    // 信息
+    const info = document.createElement('div');
+    info.className = 'alarm-item-info';
+    const label = document.createElement('div');
+    label.className = 'alarm-item-label';
+    label.textContent = alarm.label || (alarm.type === 'countdown' ? '倒计时' : '闹钟');
+
+    const meta = document.createElement('div');
+    meta.className = 'alarm-item-meta';
+    if (alarm.type === 'countdown') {
+      meta.textContent = alarm.active
+        ? '剩余 ' + formatAlarmDuration(alarm.remainingSeconds || 0)
+        : '已暂停';
+    } else {
+      const repeatText = alarm.repeat === 'daily' ? ' · 每天' : ' · 仅一次';
+      meta.textContent = alarm.time + repeatText + (alarm.active ? '' : ' · 已暂停');
+    }
+    info.appendChild(label);
+    info.appendChild(meta);
+
+    // 暂停/恢复按钮
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'alarm-item-toggle';
+    toggle.textContent = alarm.active ? '暂停' : '恢复';
+    toggle.setAttribute('aria-label', alarm.active ? '暂停闹钟' : '恢复闹钟');
+    toggle.addEventListener('click', () => handleToggleAlarm(alarm.id));
+
+    // 删除按钮
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'alarm-item-delete';
+    del.textContent = '×';
+    del.setAttribute('aria-label', '删除闹钟');
+    del.addEventListener('click', () => handleDeleteAlarm(alarm.id));
+
+    item.appendChild(icon);
+    item.appendChild(info);
+    item.appendChild(toggle);
+    item.appendChild(del);
+    alarmList.appendChild(item);
+  });
+}
+
+/** 打开新建闹钟浮层 */
+function openAlarmEditor() {
+  alarmEditing = true;
+  alarmType = 'countdown';
+  alarmError.textContent = '';
+  alarmLabelInput.value = '';
+  alarmDurationInput.value = '';
+  alarmTimeInput.value = '';
+  alarmRepeatSelect.value = 'once';
+  switchAlarmType('countdown');
+  // 隐藏主面板、展开窗口（与类目文案浮层一致），否则浮层被挤出视口看不到
+  stage.classList.add('hidden');
+  setupView.classList.add('hidden');
+  alarmEditView.classList.remove('hidden');
+  window.api.setPanelOpen(true);
+}
+
+/** 切换闹钟类型（倒计时 / 定点） */
+function switchAlarmType(type) {
+  alarmType = type;
+  alarmTabCountdown.classList.toggle('active', type === 'countdown');
+  alarmTabFixed.classList.toggle('active', type === 'fixed');
+  alarmCountdownField.classList.toggle('hidden', type !== 'countdown');
+  alarmFixedField.classList.toggle('hidden', type !== 'fixed');
+}
+
+/** 关闭新建闹钟浮层，返回主面板 */
+function closeAlarmEditor() {
+  alarmEditing = false;
+  alarmEditView.classList.add('hidden');
+  stage.classList.remove('hidden');
+  // 回到主面板，收起窗口（只保留悬浮条）
+  window.api.setPanelOpen(false);
+}
+
+/** 保存闹钟 */
+async function handleSaveAlarm() {
+  alarmError.textContent = '';
+  const label = alarmLabelInput.value.trim();
+  const repeat = alarmRepeatSelect.value;
+
+  let payload;
+  if (alarmType === 'countdown') {
+    const minutes = Number(alarmDurationInput.value);
+    if (!Number.isInteger(minutes) || minutes <= 0) {
+      alarmError.textContent = '请输入有效的倒计时时长（分钟）';
+      return;
+    }
+    payload = { type: 'countdown', label, repeat, durationSeconds: minutes * 60 };
+  } else {
+    const time = alarmTimeInput.value;
+    if (!time) {
+      alarmError.textContent = '请选择提醒时刻';
+      return;
+    }
+    payload = { type: 'fixed', label, repeat, time };
+  }
+
+  const result = await window.api.createAlarm(payload);
+  if (result.ok) {
+    currentState = result.view;
+    closeAlarmEditor();
+    render();
+  } else {
+    alarmError.textContent = result.error || '保存失败，请重试';
+  }
+}
+
+/** 删除闹钟 */
+async function handleDeleteAlarm(id) {
+  const result = await window.api.deleteAlarm(id);
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  }
+}
+
+/** 暂停/恢复闹钟 */
+async function handleToggleAlarm(id) {
+  const result = await window.api.toggleAlarm(id);
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  }
+}
+
+/** 闹钟触发：仅关闭提醒弹窗，不再闪烁悬浮条（悬浮条常驻显示最近闹钟时间） */
+function handleAlarmTriggered() {
+  // 无操作：提醒弹窗由主进程独立弹出，悬浮条无需闪烁
+}
+
+/**
+ * 计算「最近即将触发的启用中闹钟」，返回其在悬浮条上的展示文本。
+ * - 倒计时闹钟：返回剩余时长（如「25分」「1小时5分」）
+ * - 定点闹钟：返回 HH:MM
+ * 多个闹钟取触发时间最近的那个；无启用闹钟返回空字符串。
+ */
+function computeFloatAlarmText() {
+  if (!currentState) return '';
+  const alarms = (currentState.alarms || []).filter((a) => a.active);
+  if (alarms.length === 0) return '';
+
+  const now = Date.now();
+  let nearest = null;
+  let nearestAt = Infinity;
+
+  alarms.forEach((a) => {
+    let at;
+    if (a.type === 'countdown') {
+      at = Number(a.endsAt) || 0;
+    } else {
+      at = Number(a.nextAt) || nextFixedLocal(a.time);
+    }
+    if (at > 0 && at < nearestAt) {
+      nearestAt = at;
+      nearest = a;
+    }
+  });
+
+  if (!nearest) return '';
+
+  if (nearest.type === 'countdown') {
+    const remaining = Math.max(Math.ceil((nearestAt - now) / 1000), 0);
+    return formatAlarmDurationShort(remaining);
+  }
+  return String(nearest.time || '');
+}
+
+/** 计算定点闹钟（HH:MM）下一次触发的本地时间戳（渲染进程辅助，供悬浮条显示） */
+function nextFixedLocal(time) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(time || ''));
+  if (!m) return 0;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return 0;
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, min, 0, 0);
+  if (target.getTime() <= now.getTime()) {
+    target.setDate(target.getDate() + 1);
+  }
+  return target.getTime();
+}
+
+/** 把秒数格式化为精简文本（悬浮条用）：「25分」「1小时5分」 */
+function formatAlarmDurationShort(totalSeconds) {
+  const s = Math.max(Number(totalSeconds) || 0, 0);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) {
+    return `${h}小时${m}分`;
+  }
+  if (m > 0) {
+    return `${m}分`;
+  }
+  return `${sec}秒`;
+}
+
+/** 更新悬浮条上的闹钟时间显示（有启用闹钟时显示，否则隐藏） */
+function renderFloatAlarm() {
+  if (!floatAlarmEl) return;
+  const text = computeFloatAlarmText();
+  if (text) {
+    floatAlarmEl.textContent = '⏰ ' + text;
+    floatAlarmEl.classList.remove('hidden');
+  } else {
+    floatAlarmEl.classList.add('hidden');
+  }
+}
+
 /** 根据当前状态刷新整个界面 */
 function render() {
   if (!currentState) return;
   const s = currentState;
 
   // 编辑模式下不要覆盖设置页（保持输入框焦点和内容）
-  if (editing || editingCategoryTexts) {
+  if (editing || editingCategoryTexts || alarmEditing) {
     return;
   }
 
@@ -433,6 +704,12 @@ function render() {
 
   // 类目选择条
   renderCategories();
+
+  // 闹钟列表
+  renderAlarms();
+
+  // 悬浮条闹钟时间（常驻显示最近闹钟，无需展开面板）
+  renderFloatAlarm();
 
   // 打卡按钮状态（悬浮条 + 下拉面板两处同步），按「当前类目今日是否已打卡」判定
   const isDone = s.remainingDays <= 0;
@@ -772,6 +1049,24 @@ async function init() {
     setupError.textContent = '应用初始化失败，请重启应用';
   }
   render();
+
+  // 每秒刷新闹钟倒计时显示与悬浮条闹钟时间（避免全量 render 干扰输入框）
+  setInterval(() => {
+    if (!currentState || editing || editingCategoryTexts || alarmEditing) return;
+    const hasActiveAlarm = (currentState.alarms || []).some((a) => a.active);
+    if (!hasActiveAlarm) return;
+    // 重算剩余秒数（基于 endsAt）
+    const now = Date.now();
+    const alarms = currentState.alarms.map((a) => {
+      if (a.type === 'countdown') {
+        return { ...a, remainingSeconds: Math.max(Math.ceil(((Number(a.endsAt) || 0) - now) / 1000), 0) };
+      }
+      return a;
+    });
+    currentState = { ...currentState, alarms };
+    renderAlarms();
+    renderFloatAlarm();
+  }, 1000);
 }
 
 // ---------- 无边框窗口拖动（替代 -webkit-app-region: drag） ----------
@@ -895,6 +1190,33 @@ todoInput.addEventListener('keydown', (e) => {
 todoCalendarToggle.addEventListener('click', handleToggleCalendar);
 
 categoryAdd.addEventListener('click', startCreateCategory);
+
+// 闹钟相关事件
+alarmAddBtn.addEventListener('click', openAlarmEditor);
+alarmTabCountdown.addEventListener('click', () => switchAlarmType('countdown'));
+alarmTabFixed.addEventListener('click', () => switchAlarmType('fixed'));
+saveAlarmBtn.addEventListener('click', handleSaveAlarm);
+cancelAlarmBtn.addEventListener('click', closeAlarmEditor);
+alarmDurationInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    handleSaveAlarm();
+  }
+});
+attachDrag(document.querySelector('#alarm-edit-view .setup-drag'));
+
+// 主进程通知：闹钟触发 → 悬浮条闪烁
+window.api.onAlarmTriggered(() => {
+  handleAlarmTriggered();
+});
+
+// 主进程通知：闹钟列表更新（单次闹钟自动停用）
+window.api.onAlarmsUpdated((view) => {
+  if (view) {
+    currentState = view;
+    render();
+  }
+});
 
 // 点击悬浮条（消除按钮除外）切换下拉面板；拖动后不切换
 floatBar.addEventListener('click', (e) => {

@@ -17,6 +17,7 @@
         <span class="float-days" id="float-days" data-page-node-id="18OCCCw6sSVeQgRdoemgYj">--</span>
         <span class="float-unit" id="float-unit" data-page-node-id="ikyQQlHV7jcmukgYS2dF7S">天</span>
       </div>
+      <span class="float-alarm hidden" id="float-alarm" data-page-node-id="floatAlarm00000000000001">⏰</span>
       <button class="float-eliminate" id="float-eliminate-btn" data-page-node-id="Iv2Y6jYpbmgW1ADcA11na3">忍忍就过去了！</button>
       <span class="float-chevron" data-page-node-id="b1H8M9hg1BYo4qITOcGx0H">▾</span>
     </div>
@@ -64,6 +65,18 @@
           <button class="btn-ghost" id="reset-history-btn" data-page-node-id="YVwHAtHyHjdv4ERftFVMcP">重置</button>
           <button class="btn-ghost" id="edit-settings-btn" data-page-node-id="twEAzVCsZgTeDq2wrMpUlg">修改设置</button>
         </div>
+      </div>
+
+      <!-- 闹钟区 -->
+      <div class="alarm-section" id="alarm-section" data-page-node-id="alarmSection000000000000001">
+        <div class="alarm-section-head" data-page-node-id="alarmHead000000000000001">
+          <span class="alarm-section-title" data-page-node-id="alarmTitle000000000000001">⏰ 闹钟</span>
+          <button class="alarm-add-btn" id="alarm-add-btn" type="button" data-page-node-id="alarmAddBtn000000000000001">＋ 新建</button>
+        </div>
+        <div class="alarm-list" id="alarm-list" data-page-node-id="alarmList000000000000001">
+          <!-- 由 renderer.js 渲染闹钟列表 -->
+        </div>
+        <div class="alarm-empty" id="alarm-empty" data-page-node-id="alarmEmpty000000000000001">还没有闹钟，点「新建」添加</div>
       </div>
     </div>
   </div>
@@ -123,6 +136,49 @@
 
     <button id="save-category-texts-btn" class="btn btn-primary" data-page-node-id="saveCatTextsBtn0000000000001">保存</button>
     <button id="cancel-category-texts-btn" class="btn btn-ghost" data-page-node-id="cancelCatTextsBtn0000000000001">取消</button>
+  </section>
+
+  <!-- 新建闹钟浮层 -->
+  <section class="alarm-edit-view hidden" id="alarm-edit-view" data-page-node-id="alarmEditView000000000001">
+    <div class="setup-drag" data-page-node-id="alarmEditDrag00000000001">
+      <span class="panel-title" data-page-node-id="alarmEditTitle0000000001">新建闹钟</span>
+    </div>
+
+    <div class="alarm-type-tabs" data-page-node-id="alarmTypeTabs00000000001">
+      <button class="alarm-type-tab active" id="alarm-tab-countdown" type="button" data-page-node-id="alarmTabCountdown000000001">倒计时</button>
+      <button class="alarm-type-tab" id="alarm-tab-fixed" type="button" data-page-node-id="alarmTabFixed0000000001">定点</button>
+    </div>
+
+    <label class="field" data-page-node-id="alarmLabelField00000000001">
+      <span class="field-label" data-page-node-id="alarmLabelLabel0000000001">名称（说明用途）</span>
+      <input id="alarm-label-input" class="input" type="text"
+             placeholder="如：起来活动一下 / 喝水" autocomplete="off" maxlength="20" data-page-node-id="alarmLabelInput00000000001" />
+    </label>
+
+    <!-- 倒计时时长 -->
+    <label class="field" id="alarm-countdown-field" data-page-node-id="alarmCountdownField000000001">
+      <span class="field-label" data-page-node-id="alarmCountdownLabel00000001">倒计时时长（分钟）</span>
+      <input id="alarm-duration-input" class="input" type="number" min="1" max="720"
+             placeholder="如：25" autocomplete="off" data-page-node-id="alarmDurationInput00000001" />
+    </label>
+
+    <!-- 定点时刻 -->
+    <label class="field hidden" id="alarm-fixed-field" data-page-node-id="alarmFixedField0000000001">
+      <span class="field-label" data-page-node-id="alarmFixedLabel0000000001">提醒时刻</span>
+      <input id="alarm-time-input" class="input" type="time" data-page-node-id="alarmTimeInput0000000001" />
+    </label>
+
+    <label class="field" data-page-node-id="alarmRepeatField00000000001">
+      <span class="field-label" data-page-node-id="alarmRepeatLabel0000000001">重复</span>
+      <select id="alarm-repeat-select" class="input select" data-page-node-id="alarmRepeatSelect00000000001">
+        <option value="once">仅一次</option>
+        <option value="daily">每天</option>
+      </select>
+    </label>
+
+    <button id="save-alarm-btn" class="btn btn-primary" data-page-node-id="saveAlarmBtn0000000000001">保存</button>
+    <button id="cancel-alarm-btn" class="btn btn-ghost" data-page-node-id="cancelAlarmBtn0000000000001">取消</button>
+    <p id="alarm-error" class="error-text" data-page-node-id="alarmError00000000000001"></p>
   </section>
 
   <script src="renderer.js"></script>
