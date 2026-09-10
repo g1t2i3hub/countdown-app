@@ -503,23 +503,38 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.history-more {
-  width: 100%;
-  margin-top: 8px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  padding: 6px 8px;
-  border-radius: 8px;
-  transition: color 0.15s, background 0.15s;
+.history-filter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
-.history-more:hover {
-  color: var(--accent);
-  background: var(--accent-soft);
+.history-filter-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.history-filter-select {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.history-filter-select:hover {
+  border-color: #d0d4dc;
+}
+
+.history-filter-select:focus {
+  border-color: var(--accent);
 }
 
 .history-empty {

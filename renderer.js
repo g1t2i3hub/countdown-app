@@ -24,7 +24,8 @@ const historyToggle = $('#history-toggle');
 const historyToggleChevron = $('#history-toggle-chevron');
 const historyPanel = $('#history-panel');
 const historyList = $('#history-list');
-const historyMore = $('#history-more');
+const historyFilter = $('#history-filter');
+const historyFilterSelect = $('#history-filter-select');
 const historyEmpty = $('#history-empty');
 const resetHistoryBtn = $('#reset-history-btn');
 const editSettingsBtn = $('#edit-settings-btn');
@@ -51,7 +52,7 @@ const setupError = $('#setup-error');
 let currentState = null;
 let isAnimating = false;
 let historyOpen = false;
-let historyExpanded = false; // 历史记录是否已「展开全部」
+let historyRange = '7'; // 历史记录查看范围：7 / 30 / all
 let editing = false; // 是否处于「编辑设置」模式（避免 render 覆盖设置页）
 let panelOpen = false; // 下拉面板是否展开（点击切换，不再 hover）
 let didDrag = false;   // 标记是否刚发生过拖动（用于区分「点击」和「拖动」）
@@ -134,17 +135,19 @@ function renderHistory() {
   if (list.length === 0) {
     historyEmpty.classList.remove('hidden');
     historyList.classList.add('hidden');
-    historyMore.classList.add('hidden');
+    historyFilter.classList.add('hidden');
     return;
   }
 
   historyEmpty.classList.add('hidden');
   historyList.classList.remove('hidden');
+  historyFilter.classList.remove('hidden');
 
-  // 默认只显示最近 HISTORY_PREVIEW 天，超出部分通过「展开全部」按需加载
-  const HISTORY_PREVIEW = 7;
-  const hasMore = list.length > HISTORY_PREVIEW;
-  const visible = historyExpanded ? list : list.slice(0, HISTORY_PREVIEW);
+  // 按用户选择的查看范围截取：最近 7 / 30 天，或全部
+  let limit = list.length;
+  if (historyRange === '7') limit = 7;
+  else if (historyRange === '30') limit = 30;
+  const visible = list.slice(0, limit);
 
   visible.forEach((item, index) => {
     // dayNo 基于完整列表的序号，保证「第 N 天」编号正确
@@ -169,14 +172,6 @@ function renderHistory() {
     li.appendChild(time);
     historyList.appendChild(li);
   });
-
-  // 展开/收起按钮
-  if (hasMore) {
-    historyMore.classList.remove('hidden');
-    historyMore.textContent = historyExpanded ? '收起' : `展开全部（共 ${list.length} 天）`;
-  } else {
-    historyMore.classList.add('hidden');
-  }
 }
 
 /** 渲染今日待办列表 */
@@ -645,8 +640,8 @@ floatEliminateBtn.addEventListener('click', handleEliminate);
 resetHistoryBtn.addEventListener('click', handleResetHistory);
 editSettingsBtn.addEventListener('click', handleEditSettings);
 historyToggle.addEventListener('click', handleToggleHistory);
-historyMore.addEventListener('click', () => {
-  historyExpanded = !historyExpanded;
+historyFilterSelect.addEventListener('change', () => {
+  historyRange = historyFilterSelect.value;
   renderHistory();
 });
 
