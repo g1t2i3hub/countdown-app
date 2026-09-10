@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('api', {
   /** 保存设置：{ totalDays: number, message: string } */
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
 
+  /** 切换主题：'light' | 'dark'（不影响倒计时数据） */
+  setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
+
   /** 新建类目 */
   createCategory: (name) => ipcRenderer.invoke('create-category', name),
 

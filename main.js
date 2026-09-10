@@ -46,6 +46,7 @@ const DEFAULT_STATE = {
   btnActiveText: '',  // 按钮「未打卡」时文字（兼容旧数据；新数据以类目级为准）
   btnDoneText: '',     // 按钮「已打卡」时文字（兼容旧数据；新数据以类目级为准）
   displayMode: 'days', // 剩余时间显示方式：'days' | 'months' | 'years'
+  theme: 'light',      // 主题：'light'（浅色暖红）| 'dark'（深色冷青，对应官网展示）
   alarms: []           // 闹钟列表：[{ id, type: 'countdown'|'fixed', label, repeat: 'once'|'daily', endsAt, time, active }]
 };
 
@@ -151,6 +152,7 @@ function normalizeState(state) {
     s.todosByDate = {};
   }
   if (!Array.isArray(s.alarms)) s.alarms = [];
+  if (s.theme !== 'dark' && s.theme !== 'light') s.theme = 'light';
 
   // 类目字段兜底（旧类目缺字段时补齐）
   s.categories = s.categories.map((c) => ({
@@ -386,6 +388,7 @@ function buildViewModel(state) {
     btnActiveText: (currentCategory && currentCategory.btnActiveText) || state.btnActiveText || '',
     btnDoneText: (currentCategory && currentCategory.btnDoneText) || state.btnDoneText || '',
     displayMode: ['days', 'months', 'years'].includes(state.displayMode) ? state.displayMode : 'days',
+    theme: state.theme === 'dark' ? 'dark' : 'light',
     remainingDays,
     remainingText: formatRemaining(remainingDays, state.displayMode),
     eliminatedCount,
@@ -582,7 +585,9 @@ function openCalendarWindow() {
     calendarWindow.focus();
   });
 
-  calendarWindow.loadFile(path.join(__dirname, 'calendar.html'));
+  calendarWindow.loadFile(path.join(__dirname, 'calendar.html'), {
+    query: { theme: readState().theme || 'light' }
+  });
 
   // 就绪前先定位，避免弹窗先出现在默认位置
   positionCalendarWindow();
@@ -627,7 +632,7 @@ function openAlarmWindow(alarm) {
   }
 
   alarmWindow.loadFile(path.join(__dirname, 'alarm.html'), {
-    query: { label: alarm.label || '闹钟', type: alarm.type }
+    query: { label: alarm.label || '闹钟', type: alarm.type, theme: readState().theme || 'light' }
   });
 
   alarmWindow.once('ready-to-show', () => {
@@ -863,11 +868,13 @@ function registerIpcHandlers() {
     const displayMode = ['days', 'months', 'years'].includes(settings && settings.displayMode)
       ? settings.displayMode
       : 'days';
+    const theme = (settings && settings.theme === 'dark') ? 'dark' : 'light';
     const state = {
       ...DEFAULT_STATE,
       totalDays,
       targetDate,
       displayMode,
+      theme,
       // 保留类目（含类目级含义/按钮文案）与当前类目；重置打卡与待办
       categories: existing.categories,
       currentCategoryId: existing.currentCategoryId,
@@ -875,6 +882,14 @@ function registerIpcHandlers() {
       checkinsByDate: {},
       todosByDate: {}
     };
+    writeState(state);
+    return { ok: true, view: buildViewModel(state) };
+  });
+
+  // 切换主题：仅更新主题字段，不影响倒计时/打卡/待办数据
+  ipcMain.handle('set-theme', (_event, theme) => {
+    const state = readState();
+    state.theme = (theme === 'dark') ? 'dark' : 'light';
     writeState(state);
     return { ok: true, view: buildViewModel(state) };
   });

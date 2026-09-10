@@ -8,11 +8,32 @@
   --accent-strong: #f25244;
   --accent-soft: rgba(255, 107, 94, 0.14);
   --bg: #ffffff;
+  --bg-soft: #fafbfc;
   --text: #23262f;
   --text-muted: #9aa0ac;
+  --text-faint: #c2c7d1;
   --border: #eef0f4;
+  --border-strong: #d0d4dc;
+  --on-accent: #ffffff;
+  --scrollbar: #d8dce3;
   --shadow: 0 8px 28px rgba(31, 36, 48, 0.16);
   --radius: 16px;
+}
+
+body.theme-dark {
+  --accent: #4cc2ff;
+  --accent-strong: #66ceff;
+  --accent-soft: rgba(76, 194, 255, 0.16);
+  --bg: #1a1e26;
+  --bg-soft: #20242e;
+  --text: #eef0f5;
+  --text-muted: #aab3c0;
+  --text-faint: #77818f;
+  --border: #323946;
+  --border-strong: #424b5a;
+  --on-accent: #0a0c10;
+  --scrollbar: #424b5a;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
 }
 
 * {
@@ -151,7 +172,7 @@ body {
   font-family: inherit;
   cursor: pointer;
   color: var(--text);
-  background: #fafbfc;
+  background: var(--bg-soft);
   position: relative;
   transition: background 0.15s, color 0.15s;
 }
@@ -161,7 +182,7 @@ body {
 }
 
 .cal-day.other-month {
-  color: #c2c7d1;
+  color: var(--text-faint);
   background: transparent;
   cursor: default;
 }
@@ -173,7 +194,7 @@ body {
 
 .cal-day.selected {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .cal-day.has-todo::after {
@@ -203,7 +224,7 @@ body {
 }
 
 .cal-day.selected.has-checkin::before {
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* 选中日期详情 */
@@ -254,7 +275,7 @@ body {
   align-items: center;
   justify-content: center;
   font-size: 11px;
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .cal-detail-checkin-time {
@@ -296,7 +317,7 @@ body {
   gap: 4px;
   padding: 2px 7px;
   border-radius: 999px;
-  background: #f5f6f8;
+  background: var(--bg-soft);
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
@@ -333,12 +354,12 @@ body {
   width: 16px;
   height: 16px;
   border-radius: 5px;
-  border: 1.5px solid #d0d4dc;
+  border: 1.5px solid var(--border-strong);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .cal-detail-item.done .cal-detail-mark {
@@ -358,7 +379,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d8dce3;
+  background: var(--scrollbar);
   border-radius: 999px;
 }
 

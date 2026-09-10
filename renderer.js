@@ -21,10 +21,6 @@ const remainingDaysEl = $('#remaining-days');
 const numberUnitEl = $('#number-unit');
 const eliminateBtn = $('#eliminate-btn');
 
-const historyToggle = $('#history-toggle');
-const historyToggleChevron = $('#history-toggle-chevron');
-const historyPanel = $('#history-panel');
-const historySummary = $('#history-summary');
 const resetHistoryBtn = $('#reset-history-btn');
 const editSettingsBtn = $('#edit-settings-btn');
 
@@ -42,6 +38,7 @@ const stage = $('#stage');
 const targetDateInput = $('#target-date-input');
 const targetDateHint = $('#target-date-hint');
 const displayModeSelect = $('#display-mode-select');
+const themeSelect = $('#theme-select');
 const saveSettingsBtn = $('#save-settings-btn');
 const cancelEditBtn = $('#cancel-edit-btn');
 const setupError = $('#setup-error');
@@ -76,7 +73,6 @@ const alarmError = $('#alarm-error');
 // ---------- 状态 ----------
 let currentState = null;
 let isAnimating = false;
-let historyOpen = false;
 let editing = false; // 是否处于「编辑设置」模式（避免 render 覆盖设置页）
 let panelOpen = false; // 下拉面板是否展开（点击切换，不再 hover）
 let didDrag = false;   // 标记是否刚发生过拖动（用于区分「点击」和「拖动」）
@@ -300,14 +296,6 @@ function startRenameCategory(cat) {
   });
 }
 
-// ---------- 历史折叠 ----------
-
-function setHistoryOpen(open) {
-  historyOpen = open;
-  historyPanel.classList.toggle('hidden', !open);
-  historyToggle.classList.toggle('open', open);
-}
-
 // ---------- 下拉面板展开/收起（点击切换） ----------
 
 function setPanelOpen(open) {
@@ -323,14 +311,11 @@ function togglePanel() {
 
 // ---------- 渲染 ----------
 
-/** 渲染历史记录统计摘要（已打卡 N 天 · M 个类目） */
-function renderHistory() {
-  const count = currentState ? (currentState.eliminatedCount || 0) : 0;
-  const catCount = currentState ? ((currentState.categories && currentState.categories.length) || 0) : 0;
-  if (count > 0) {
-    historySummary.textContent = `已打卡 ${count} 天 · ${catCount} 个类目`;
-  } else {
-    historySummary.textContent = '还没有打卡记录';
+/** 应用主题（浅色暖红 / 深色冷青） */
+function applyTheme(theme) {
+  document.body.classList.toggle('theme-dark', theme === 'dark');
+  if (themeSelect) {
+    themeSelect.value = (theme === 'dark') ? 'dark' : 'light';
   }
 }
 
@@ -651,6 +636,9 @@ function render() {
   if (!currentState) return;
   const s = currentState;
 
+  // 应用主题（深色冷青 / 浅色暖红）
+  applyTheme(s.theme);
+
   // 编辑模式下不要覆盖设置页（保持输入框焦点和内容）
   if (editing || editingCategoryTexts || alarmEditing) {
     return;
@@ -695,9 +683,6 @@ function render() {
     floatUnitEl.textContent = '';
     floatUnitEl.classList.add('hidden');
   }
-
-  // 历史
-  renderHistory();
 
   // 待办
   renderTodos();
@@ -792,7 +777,8 @@ async function handleSaveSettings() {
   }
 
   const displayMode = displayModeSelect.value;
-  const result = await window.api.saveSettings({ targetDate, totalDays: days, displayMode });
+  const theme = themeSelect.value === 'dark' ? 'dark' : 'light';
+  const result = await window.api.saveSettings({ targetDate, totalDays: days, displayMode, theme });
 
   if (result.ok) {
     currentState = result.view;
@@ -881,6 +867,7 @@ function handleEditSettings() {
   targetDateInput.value = targetDate;
   updateTargetDateHint();
   displayModeSelect.value = currentState.displayMode || 'days';
+  themeSelect.value = currentState.theme === 'dark' ? 'dark' : 'light';
   setupError.textContent = '';
   cancelEditBtn.classList.remove('hidden');
   setupView.classList.remove('hidden');
@@ -897,11 +884,6 @@ function handleCancelEdit() {
   // 回到主界面，收起窗口（只保留悬浮条）
   window.api.setPanelOpen(false);
   render();
-}
-
-/** 切换历史记录展开 / 收起 */
-function handleToggleHistory() {
-  setHistoryOpen(!historyOpen);
 }
 
 /** 新增待办（默认挂到当前选中类目） */
@@ -1172,13 +1154,21 @@ cancelEditBtn.addEventListener('click', handleCancelEdit);
 saveCategoryTextsBtn.addEventListener('click', handleSaveCategoryTexts);
 cancelCategoryTextsBtn.addEventListener('click', closeCategoryTextEditor);
 targetDateInput.addEventListener('change', updateTargetDateHint);
+// 主题切换即时预览（不依赖保存）
+themeSelect.addEventListener('change', async () => {
+  const theme = themeSelect.value === 'dark' ? 'dark' : 'light';
+  applyTheme(theme);
+  const result = await window.api.setTheme(theme);
+  if (result.ok) {
+    currentState = result.view;
+  }
+});
 // 目标日期不能早于今天
 targetDateInput.min = toDateStr(new Date());
 eliminateBtn.addEventListener('click', handleEliminate);
 floatEliminateBtn.addEventListener('click', handleEliminate);
 resetHistoryBtn.addEventListener('click', handleResetHistory);
 editSettingsBtn.addEventListener('click', handleEditSettings);
-historyToggle.addEventListener('click', handleToggleHistory);
 
 todoAddBtn.addEventListener('click', handleAddTodo);
 todoInput.addEventListener('keydown', (e) => {

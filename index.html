@@ -55,18 +55,6 @@
         </button>
       </div>
 
-      <button class="history-toggle" id="history-toggle" type="button" data-page-node-id="aScyCaRopE0yamzX47pD8A">
-        <span data-page-node-id="C5bFMWXbthWsE1nbgJcTD9">历史记录</span>
-        <span class="history-toggle-chevron" id="history-toggle-chevron" data-page-node-id="LzV0ObUVD7raD5C0O0Gwsc">▾</span>
-      </button>
-      <div class="history-panel hidden" id="history-panel" data-page-node-id="ltX5w9zrwxHRCnxmyhBlqo">
-        <div class="history-summary" id="history-summary" data-page-node-id="historySummary0000000000001">还没有打卡记录</div>
-        <div class="history-actions" data-page-node-id="xQVUjqzLZyjkFMYvGp6r3J">
-          <button class="btn-ghost" id="reset-history-btn" data-page-node-id="YVwHAtHyHjdv4ERftFVMcP">重置</button>
-          <button class="btn-ghost" id="edit-settings-btn" data-page-node-id="twEAzVCsZgTeDq2wrMpUlg">修改设置</button>
-        </div>
-      </div>
-
       <!-- 闹钟区 -->
       <div class="alarm-section" id="alarm-section" data-page-node-id="alarmSection000000000000001">
         <div class="alarm-section-head" data-page-node-id="alarmHead000000000000001">
@@ -77,6 +65,12 @@
           <!-- 由 renderer.js 渲染闹钟列表 -->
         </div>
         <div class="alarm-empty" id="alarm-empty" data-page-node-id="alarmEmpty000000000000001">还没有闹钟，点「新建」添加</div>
+      </div>
+
+      <!-- 底部工具栏：修改设置 / 重置（独立于历史记录） -->
+      <div class="footer-toolbar" data-page-node-id="footerToolbar00000000000001">
+        <button class="toolbar-btn" id="edit-settings-btn" type="button" data-page-node-id="twEAzVCsZgTeDq2wrMpUlg">⚙ 修改设置</button>
+        <button class="toolbar-btn" id="reset-history-btn" type="button" data-page-node-id="YVwHAtHyHjdv4ERftFVMcP">↺ 重置</button>
       </div>
     </div>
   </div>
@@ -101,6 +95,14 @@
         <option value="days">仅天数（如 100 天）</option>
         <option value="months">月 + 天（如 3 个月 10 天）</option>
         <option value="years">年 + 月 + 天（如 1 年 2 个月 5 天）</option>
+      </select>
+    </label>
+
+    <label class="field" data-page-node-id="themeField00000000000001">
+      <span class="field-label" data-page-node-id="themeLabel00000000000001">主题</span>
+      <select id="theme-select" class="input select" data-page-node-id="themeSelect00000000000001">
+        <option value="light">浅色 · 暖红</option>
+        <option value="dark">深色 · 冷青</option>
       </select>
     </label>
 

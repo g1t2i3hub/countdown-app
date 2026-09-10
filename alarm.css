@@ -1,5 +1,21 @@
 /* 闹钟提醒弹窗样式 */
 
+:root {
+  --accent: #ff6b5e;
+  --accent-strong: #f05a4d;
+  --bg: #ffffff;
+  --text: #1a1a1a;
+  --text-muted: #666;
+}
+
+body.theme-dark {
+  --accent: #4cc2ff;
+  --accent-strong: #66ceff;
+  --bg: #1a1e26;
+  --text: #eef0f5;
+  --text-muted: #aab3c0;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -22,7 +38,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  background: #ffffff;
+  background: var(--bg);
   border-radius: 16px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
   padding: 24px;
@@ -36,19 +52,19 @@ body {
 .alarm-title {
   font-size: 18px;
   font-weight: 700;
-  color: #1a1a1a;
+  color: var(--text);
 }
 
 .alarm-label {
   font-size: 14px;
-  color: #666;
+  color: var(--text-muted);
   margin-bottom: 10px;
   text-align: center;
 }
 
 .alarm-btn {
   padding: 10px 36px;
-  background: #ff6b5e;
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 10px;
@@ -59,7 +75,7 @@ body {
 }
 
 .alarm-btn:hover {
-  background: #f05a4d;
+  background: var(--accent-strong);
 }
 
 .alarm-btn:active {

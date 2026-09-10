@@ -10,6 +10,12 @@
 
 const $ = (selector) => document.querySelector(selector);
 
+// 应用主题（跟随主窗口）
+const _calTheme = new URLSearchParams(window.location.search).get('theme');
+if (_calTheme === 'dark') {
+  document.body.classList.add('theme-dark');
+}
+
 // ---------- DOM 引用 ----------
 const calTitleEl = $('#cal-title');
 const calWeekdaysEl = $('#cal-weekdays');
