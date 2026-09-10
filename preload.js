@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('api', {
   /** 切换当前类目 */
   setCurrentCategory: (id) => ipcRenderer.invoke('set-current-category', id),
 
+  /** 更新指定类目的文案（含义 / 按钮未消除文字 / 按钮已消除文字） */
+  updateCategoryTexts: (id, texts) => ipcRenderer.invoke('update-category-texts', id, texts),
+
   /** 对指定类目打卡（每类目每天一次） */
   eliminateCategory: (categoryId) => ipcRenderer.invoke('eliminate-category', categoryId),
 

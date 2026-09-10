@@ -1,6 +1,6 @@
 {
   "name": "countdown-app",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "倒计时桌面应用 —— 天数倒数 + 每日消除仪式感",
   "main": "main.js",
   "author": "Kou",
@@ -65,7 +65,7 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "countdown-app-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -80,7 +80,7 @@
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "countdown-app-${version}-portable.${ext}"
+      "artifactName": "countdown-app-${version}-portable-${arch}.${ext}"
     }
   }
 }

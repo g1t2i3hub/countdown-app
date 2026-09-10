@@ -37,14 +37,14 @@ const DEFAULT_STATE = {
   schemaVersion: SCHEMA_VERSION, // 数据版本号
   totalDays: 0,   // 用户设置的总天数
   targetDate: '', // 目标日期（YYYY-MM-DD），设置页通过日历选中；为空时由 totalDays 反推
-  message: '',    // 自定义含义文字
+  message: '',    // 自定义含义文字（兼容旧数据；新数据以类目级 message 为准）
   history: [],    // 天级打卡记录：[{ id, date, time, timestamp }]，每天最多一条，倒计时递减依据
-  categories: [], // 打卡类目：[{ id, name, color, createdAt }]
+  categories: [], // 打卡类目：[{ id, name, color, createdAt, message, btnActiveText, btnDoneText }]
   currentCategoryId: '', // 当前选中类目 id
   checkinsByDate: {},    // 类目级打卡记录：{ "YYYY-MM-DD": { catId: { time, timestamp } } }
   todosByDate: {}, // 按日期分组的待办：{ "YYYY-MM-DD": [{ id, text, done, carried, categoryId }] }
-  btnActiveText: '',  // 按钮「未打卡」时文字（用户自定义）
-  btnDoneText: '',     // 按钮「已打卡」时文字（用户自定义）
+  btnActiveText: '',  // 按钮「未打卡」时文字（兼容旧数据；新数据以类目级为准）
+  btnDoneText: '',     // 按钮「已打卡」时文字（兼容旧数据；新数据以类目级为准）
   displayMode: 'days'  // 剩余时间显示方式：'days' | 'months' | 'years'
 };
 
@@ -152,7 +152,10 @@ function normalizeState(state) {
     id: String((c && c.id) || ''),
     name: String((c && c.name) || '').trim() || '打卡',
     color: String((c && c.color) || CATEGORY_COLORS[0]),
-    createdAt: Number(c && c.createdAt) || Date.now()
+    createdAt: Number(c && c.createdAt) || Date.now(),
+    message: String((c && c.message) || ''),
+    btnActiveText: String((c && c.btnActiveText) || ''),
+    btnDoneText: String((c && c.btnDoneText) || '')
   }));
 
   // 类目至少 1 个：为空时自动补默认类目「打卡」
@@ -334,9 +337,10 @@ function buildViewModel(state) {
     configured: totalDays > 0,
     totalDays,
     targetDate: state.targetDate || '',
-    message: state.message || '',
-    btnActiveText: state.btnActiveText || '',
-    btnDoneText: state.btnDoneText || '',
+    // 文案以「当前类目」为准；类目未设置时回退全局旧字段（兼容）
+    message: (currentCategory && currentCategory.message) || state.message || '',
+    btnActiveText: (currentCategory && currentCategory.btnActiveText) || state.btnActiveText || '',
+    btnDoneText: (currentCategory && currentCategory.btnDoneText) || state.btnDoneText || '',
     displayMode: ['days', 'months', 'years'].includes(state.displayMode) ? state.displayMode : 'days',
     remainingDays,
     remainingText: formatRemaining(remainingDays, state.displayMode),
@@ -436,12 +440,22 @@ function setPanelExpanded(expanded) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const [x, y] = mainWindow.getPosition();
   const targetHeight = expanded ? WINDOW_SIZE.height : BAR_HEIGHT;
+  // 尺寸未变化时不重复 setBounds（避免无谓的窗口几何重建导致输入框失焦）
+  const currentBounds = mainWindow.getBounds();
+  if (currentBounds.height === targetHeight && currentBounds.width === WINDOW_SIZE.width) {
+    return;
+  }
   mainWindow.setBounds({
     x,
     y,
     width: WINDOW_SIZE.width,
     height: targetHeight
   });
+  // Windows 上 setBounds 可能让透明置顶窗口短暂失焦，这里主动恢复，
+  // 保证展开面板后输入框能立即获得焦点、不出现「无法输入」的偶发失灵。
+  if (expanded && mainWindow.isVisible()) {
+    mainWindow.focus();
+  }
 }
 
 /**
@@ -636,7 +650,8 @@ function registerIpcHandlers() {
     return buildViewModel(state);
   });
 
-  // 保存设置：设置新倒计时会重置打卡/待办，但保留类目（视为开启一段新的倒计时）
+  // 保存设置：设置新倒计时会重置打卡/待办，但保留类目（视为开启一段新的倒计时）。
+  // 含义/按钮文字已改为「类目级」，故这里不再接收/保存这三个字段。
   ipcMain.handle('save-settings', (_event, settings) => {
     const existing = readState();
     const targetDate = String(settings && settings.targetDate ? settings.targetDate : '').trim();
@@ -655,9 +670,6 @@ function registerIpcHandlers() {
       }
     }
 
-    const message = String(settings && settings.message ? settings.message : '').trim();
-    const btnActiveText = String(settings && settings.btnActiveText ? settings.btnActiveText : '').trim();
-    const btnDoneText = String(settings && settings.btnDoneText ? settings.btnDoneText : '').trim();
     const displayMode = ['days', 'months', 'years'].includes(settings && settings.displayMode)
       ? settings.displayMode
       : 'days';
@@ -665,11 +677,8 @@ function registerIpcHandlers() {
       ...DEFAULT_STATE,
       totalDays,
       targetDate,
-      message,
-      btnActiveText,
-      btnDoneText,
       displayMode,
-      // 保留类目与当前类目；重置打卡与待办
+      // 保留类目（含类目级含义/按钮文案）与当前类目；重置打卡与待办
       categories: existing.categories,
       currentCategoryId: existing.currentCategoryId,
       history: [],
@@ -834,6 +843,29 @@ function registerIpcHandlers() {
     }
 
     const newState = { ...state, currentCategoryId: cid };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // 更新指定类目的文案（含义 / 按钮未消除文字 / 按钮已消除文字）
+  ipcMain.handle('update-category-texts', (_event, id, texts) => {
+    const state = readState();
+    const cid = String(id || '');
+    const cat = state.categories.find((c) => c.id === cid);
+
+    if (!cat) {
+      return { ok: false, error: '类目不存在', view: buildViewModel(state) };
+    }
+
+    const patch = texts && typeof texts === 'object' ? texts : {};
+    const message = String(patch.message || '').trim();
+    const btnActiveText = String(patch.btnActiveText || '').trim();
+    const btnDoneText = String(patch.btnDoneText || '').trim();
+
+    const categories = state.categories.map((c) =>
+      c.id === cid ? { ...c, message, btnActiveText, btnDoneText } : c
+    );
+    const newState = { ...state, categories };
     writeState(newState);
     return { ok: true, view: buildViewModel(newState) };
   });

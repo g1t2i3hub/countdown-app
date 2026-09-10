@@ -40,13 +40,19 @@ const setupView = $('#setup-view');
 const stage = $('#stage');
 const targetDateInput = $('#target-date-input');
 const targetDateHint = $('#target-date-hint');
-const messageInput = $('#message-input');
-const btnActiveTextInput = $('#btn-active-text-input');
-const btnDoneTextInput = $('#btn-done-text-input');
 const displayModeSelect = $('#display-mode-select');
 const saveSettingsBtn = $('#save-settings-btn');
 const cancelEditBtn = $('#cancel-edit-btn');
 const setupError = $('#setup-error');
+
+// 类目文案编辑浮层
+const categoryEditView = $('#category-edit-view');
+const categoryEditTitle = $('#category-edit-title');
+const categoryMessageInput = $('#category-message-input');
+const categoryActiveTextInput = $('#category-active-text-input');
+const categoryDoneTextInput = $('#category-done-text-input');
+const saveCategoryTextsBtn = $('#save-category-texts-btn');
+const cancelCategoryTextsBtn = $('#cancel-category-texts-btn');
 
 // ---------- 状态 ----------
 let currentState = null;
@@ -56,6 +62,8 @@ let editing = false; // 是否处于「编辑设置」模式（避免 render 覆
 let panelOpen = false; // 下拉面板是否展开（点击切换，不再 hover）
 let didDrag = false;   // 标记是否刚发生过拖动（用于区分「点击」和「拖动」）
 let categoryInputActive = false; // 是否正在内联输入类目名（新增/重命名），避免重复开输入框
+let editingCategoryTexts = false; // 是否正在编辑类目文案（浮层打开中）
+let editingCategoryId = '';       // 正在编辑文案的类目 id
 
 // ---------- 工具函数 ----------
 
@@ -142,8 +150,20 @@ function renderCategories() {
       handleDeleteCategory(cat.id);
     });
 
+    // 编辑文案按钮（✎）：打开类目文案编辑浮层
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'category-edit';
+    edit.textContent = '✎';
+    edit.title = '编辑含义与按钮文字';
+    edit.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCategoryTextEditor(cat.id);
+    });
+
     chip.appendChild(dot);
     chip.appendChild(name);
+    chip.appendChild(edit);
     chip.appendChild(del);
 
     // 单击切换当前类目
@@ -361,7 +381,7 @@ function render() {
   const s = currentState;
 
   // 编辑模式下不要覆盖设置页（保持输入框焦点和内容）
-  if (editing) {
+  if (editing || editingCategoryTexts) {
     return;
   }
 
@@ -494,20 +514,14 @@ async function handleSaveSettings() {
     return;
   }
 
-  const message = messageInput.value;
-  const btnActiveText = btnActiveTextInput.value;
-  const btnDoneText = btnDoneTextInput.value;
   const displayMode = displayModeSelect.value;
-  const result = await window.api.saveSettings({ targetDate, totalDays: days, message, btnActiveText, btnDoneText, displayMode });
+  const result = await window.api.saveSettings({ targetDate, totalDays: days, displayMode });
 
   if (result.ok) {
     currentState = result.view;
     editing = false;
     setupError.textContent = '';
     cancelEditBtn.classList.add('hidden');
-    messageInput.value = currentState.message;
-    btnActiveTextInput.value = currentState.btnActiveText || '';
-    btnDoneTextInput.value = currentState.btnDoneText || '';
     displayModeSelect.value = currentState.displayMode || 'days';
     // 保存成功回到主界面，收起窗口（只保留悬浮条）
     window.api.setPanelOpen(false);
@@ -589,9 +603,6 @@ function handleEditSettings() {
   const targetDate = currentState.targetDate || addDaysToToday(currentState.totalDays || 0);
   targetDateInput.value = targetDate;
   updateTargetDateHint();
-  messageInput.value = currentState.message;
-  btnActiveTextInput.value = currentState.btnActiveText || '';
-  btnDoneTextInput.value = currentState.btnDoneText || '';
   displayModeSelect.value = currentState.displayMode || 'days';
   setupError.textContent = '';
   cancelEditBtn.classList.remove('hidden');
@@ -700,6 +711,56 @@ async function handleSelectCategory(id) {
   }
 }
 
+// ---------- 类目文案编辑浮层 ----------
+
+/** 打开类目文案编辑浮层，回显该类目当前的文案 */
+function openCategoryTextEditor(id) {
+  if (!currentState) return;
+  const cat = (currentState.categories || []).find((c) => c.id === id);
+  if (!cat) return;
+
+  editingCategoryTexts = true;
+  editingCategoryId = id;
+  categoryEditTitle.textContent = `编辑「${cat.name}」文案`;
+  categoryMessageInput.value = cat.message || '';
+  categoryActiveTextInput.value = cat.btnActiveText || '';
+  categoryDoneTextInput.value = cat.btnDoneText || '';
+
+  categoryEditView.classList.remove('hidden');
+  stage.classList.add('hidden');
+  setupView.classList.add('hidden');
+  // 浮层需要完整高度，展开窗口
+  window.api.setPanelOpen(true);
+}
+
+/** 保存类目文案 */
+async function handleSaveCategoryTexts() {
+  if (!currentState || !editingCategoryId) return;
+  const result = await window.api.updateCategoryTexts(editingCategoryId, {
+    message: categoryMessageInput.value,
+    btnActiveText: categoryActiveTextInput.value,
+    btnDoneText: categoryDoneTextInput.value
+  });
+
+  if (result.ok) {
+    currentState = result.view;
+    closeCategoryTextEditor();
+    render();
+  } else {
+    window.alert(result.error || '保存失败');
+  }
+}
+
+/** 关闭类目文案编辑浮层，返回主界面 */
+function closeCategoryTextEditor() {
+  editingCategoryTexts = false;
+  editingCategoryId = '';
+  categoryEditView.classList.add('hidden');
+  stage.classList.remove('hidden');
+  // 回到主界面，收起窗口（只保留悬浮条）
+  window.api.setPanelOpen(false);
+}
+
 // ---------- 初始化 ----------
 
 async function init() {
@@ -742,9 +803,9 @@ function attachDrag(el) {
   // 用 pointerdown（有正确的 pointerId），setPointerCapture 才能真正生效，
   // 鼠标快速移出窗口也能持续收到 pointermove，避免「卡顿、不跟手」。
   el.addEventListener('pointerdown', (e) => {
-    // 只有鼠标左键且目标不在 input/button 上才触发拖动
+    // 只有鼠标左键且目标不在可编辑元素上才触发拖动
     if (e.button !== 0) return;
-    if (e.target.closest('input, button')) return;
+    if (e.target.closest('input, button, select, textarea, [contenteditable]')) return;
 
     dragging = true;
     lastX = e.screenX;
@@ -809,9 +870,12 @@ function attachDrag(el) {
 
 attachDrag(document.querySelector('.float-drag'));
 attachDrag(document.querySelector('.setup-drag'));
+attachDrag(document.querySelector('#category-edit-view .setup-drag'));
 
 saveSettingsBtn.addEventListener('click', handleSaveSettings);
 cancelEditBtn.addEventListener('click', handleCancelEdit);
+saveCategoryTextsBtn.addEventListener('click', handleSaveCategoryTexts);
+cancelCategoryTextsBtn.addEventListener('click', closeCategoryTextEditor);
 targetDateInput.addEventListener('change', updateTargetDateHint);
 // 目标日期不能早于今天
 targetDateInput.min = toDateStr(new Date());

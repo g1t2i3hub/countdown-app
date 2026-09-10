@@ -91,28 +91,38 @@
       </select>
     </label>
 
-    <label class="field" data-page-node-id="WQOpngScZ1d4G8dgjXXbx1">
-      <span class="field-label" data-page-node-id="VEfFIjlMGAP3A78TYkZeq3">含义</span>
-      <input id="message-input" class="input" type="text"
-             placeholder="距离完成还有 X 天" autocomplete="off" data-page-node-id="7zpNwgCJqTBQgwMYBW3Tnf" />
-    </label>
-
-    <label class="field" data-page-node-id="btnActiveField0000000000000001">
-      <span class="field-label" data-page-node-id="btnActiveLabel0000000000000001">按钮文字（未消除时）</span>
-      <input id="btn-active-text-input" class="input" type="text"
-             placeholder="打卡·运动（默认）" autocomplete="off" maxlength="20" data-page-node-id="btnActiveInput0000000000000001" />
-    </label>
-
-    <label class="field" data-page-node-id="btnDoneField00000000000000001">
-      <span class="field-label" data-page-node-id="btnDoneLabel00000000000000001">按钮文字（已消除后）</span>
-      <input id="btn-done-text-input" class="input" type="text"
-             placeholder="已打卡（默认）" autocomplete="off" maxlength="20" data-page-node-id="btnDoneInput00000000000000001" />
-    </label>
-
     <button id="save-settings-btn" class="btn btn-primary" data-page-node-id="tsF9bx8oOw9ehHg1GDScfw">保存</button>
     <button id="cancel-edit-btn" class="btn btn-ghost hidden" data-page-node-id="C4hvHJV0IEVfkND5l8C3VY">取消</button>
 
     <p id="setup-error" class="error-text" data-page-node-id="oPXjg8dtW0PGBwBdsUFNj0"></p>
+  </section>
+
+  <!-- 类目文案编辑浮层（点击类目 chip 的 ✎ 打开，编辑含义 / 按钮文字） -->
+  <section class="category-edit-view hidden" id="category-edit-view" data-page-node-id="categoryEditView00000000001">
+    <div class="setup-drag" data-page-node-id="categoryEditDrag00000000001">
+      <span class="panel-title" id="category-edit-title" data-page-node-id="categoryEditTitle0000000001">编辑类目文案</span>
+    </div>
+
+    <label class="field" data-page-node-id="catMsgField0000000000000001">
+      <span class="field-label" data-page-node-id="catMsgLabel0000000000000001">含义</span>
+      <input id="category-message-input" class="input" type="text"
+             placeholder="距离完成还有 X 天" autocomplete="off" data-page-node-id="catMsgInput0000000000000001" />
+    </label>
+
+    <label class="field" data-page-node-id="catActiveField0000000000000001">
+      <span class="field-label" data-page-node-id="catActiveLabel0000000000000001">按钮文字（未消除时）</span>
+      <input id="category-active-text-input" class="input" type="text"
+             placeholder="打卡·运动（默认）" autocomplete="off" maxlength="20" data-page-node-id="catActiveInput0000000000000001" />
+    </label>
+
+    <label class="field" data-page-node-id="catDoneField00000000000000001">
+      <span class="field-label" data-page-node-id="catDoneLabel00000000000000001">按钮文字（已消除后）</span>
+      <input id="category-done-text-input" class="input" type="text"
+             placeholder="已打卡（默认）" autocomplete="off" maxlength="20" data-page-node-id="catDoneInput00000000000000001" />
+    </label>
+
+    <button id="save-category-texts-btn" class="btn btn-primary" data-page-node-id="saveCatTextsBtn0000000000001">保存</button>
+    <button id="cancel-category-texts-btn" class="btn btn-ghost" data-page-node-id="cancelCatTextsBtn0000000000001">取消</button>
   </section>
 
   <script src="renderer.js"></script>
