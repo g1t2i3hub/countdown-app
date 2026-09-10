@@ -24,6 +24,7 @@ const dragEl = $('#calendar-drag');
 let cursor = new Date(); // 当前显示的月份（取当月 1 号）
 let selected = null;     // 选中的日期字符串 YYYY-MM-DD
 let todoDates = {};      // { "YYYY-MM-DD": { done, total } }
+let checkinByDate = {};  // { "YYYY-MM-DD": "HH:MM:SS" } 打卡记录（消除时间）
 
 // ---------- 工具 ----------
 function toDateStr(date) {
@@ -87,6 +88,10 @@ function renderGrid() {
       if (info.done === info.total) btn.classList.add('all-done');
     }
 
+    if (checkinByDate[dateStr]) {
+      btn.classList.add('has-checkin');
+    }
+
     btn.addEventListener('click', () => {
       selected = dateStr;
       renderGrid();
@@ -113,14 +118,45 @@ async function renderDetail() {
   title.textContent = formatDateLabel(selected);
   calDetailEl.appendChild(title);
 
+  // 打卡记录（消除时间）：有则显示，无则跳过
+  const checkinTime = checkinByDate[selected];
+  if (checkinTime) {
+    const section = document.createElement('div');
+    section.className = 'cal-detail-section';
+
+    const sectionTitle = document.createElement('div');
+    sectionTitle.className = 'cal-detail-section-title';
+    sectionTitle.textContent = '打卡记录';
+
+    const item = document.createElement('div');
+    item.className = 'cal-detail-checkin';
+
+    const mark = document.createElement('span');
+    mark.className = 'cal-detail-checkin-mark';
+    mark.textContent = '✓';
+
+    const time = document.createElement('span');
+    time.className = 'cal-detail-checkin-time';
+    time.textContent = checkinTime || '--:--:--';
+
+    item.appendChild(mark);
+    item.appendChild(time);
+    section.appendChild(sectionTitle);
+    section.appendChild(item);
+    calDetailEl.appendChild(section);
+  }
+
   const result = await window.api.getTodosByDate(selected);
   const list = result.todos || [];
 
   if (list.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'cal-detail-empty';
-    empty.textContent = '当天没有待办记录';
-    calDetailEl.appendChild(empty);
+    // 无待办：若已有打卡记录，则不再追加空提示；否则提示当天没有记录
+    if (!checkinTime) {
+      const empty = document.createElement('div');
+      empty.className = 'cal-detail-empty';
+      empty.textContent = '当天没有记录';
+      calDetailEl.appendChild(empty);
+    }
     return;
   }
 
@@ -227,6 +263,12 @@ async function init() {
   try {
     const overview = await window.api.getCalendarOverview();
     todoDates = overview.todoDates || {};
+    checkinByDate = {};
+    (overview.history || []).forEach((entry) => {
+      if (entry && entry.date && !checkinByDate[entry.date]) {
+        checkinByDate[entry.date] = entry.time || '';
+      }
+    });
   } catch (err) {
     console.error('获取日历概况失败:', err);
   }

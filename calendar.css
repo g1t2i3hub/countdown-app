@@ -190,6 +190,22 @@ body {
   background: #4caf7d;
 }
 
+/* 打卡记录标记：右上角 ✓，与底部待办圆点区分 */
+.cal-day.has-checkin::before {
+  content: '✓';
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.cal-day.selected.has-checkin::before {
+  color: #fff;
+}
+
 /* 选中日期详情 */
 .cal-detail {
   flex: 1 1 auto;
@@ -205,6 +221,44 @@ body {
   font-weight: 700;
   color: var(--text);
   margin-bottom: 8px;
+}
+
+/* 打卡记录详情 */
+.cal-detail-section {
+  margin-bottom: 8px;
+}
+
+.cal-detail-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin: 4px 0 6px;
+}
+
+.cal-detail-checkin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.cal-detail-checkin-mark {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #fff;
+}
+
+.cal-detail-checkin-time {
+  font-variant-numeric: tabular-nums;
 }
 
 .cal-detail-item {

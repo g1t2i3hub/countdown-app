@@ -23,10 +23,7 @@ const eliminateBtn = $('#eliminate-btn');
 const historyToggle = $('#history-toggle');
 const historyToggleChevron = $('#history-toggle-chevron');
 const historyPanel = $('#history-panel');
-const historyList = $('#history-list');
-const historyFilter = $('#history-filter');
-const historyFilterSelect = $('#history-filter-select');
-const historyEmpty = $('#history-empty');
+const historySummary = $('#history-summary');
 const resetHistoryBtn = $('#reset-history-btn');
 const editSettingsBtn = $('#edit-settings-btn');
 
@@ -52,7 +49,6 @@ const setupError = $('#setup-error');
 let currentState = null;
 let isAnimating = false;
 let historyOpen = false;
-let historyRange = '7'; // 历史记录查看范围：7 / 30 / all
 let editing = false; // 是否处于「编辑设置」模式（避免 render 覆盖设置页）
 let panelOpen = false; // 下拉面板是否展开（点击切换，不再 hover）
 let didDrag = false;   // 标记是否刚发生过拖动（用于区分「点击」和「拖动」）
@@ -127,51 +123,10 @@ function togglePanel() {
 
 // ---------- 渲染 ----------
 
-/** 渲染历史记录列表 */
+/** 渲染历史记录统计摘要（已打卡 N 天） */
 function renderHistory() {
-  const list = currentState ? currentState.history || [] : [];
-  historyList.innerHTML = '';
-
-  if (list.length === 0) {
-    historyEmpty.classList.remove('hidden');
-    historyList.classList.add('hidden');
-    historyFilter.classList.add('hidden');
-    return;
-  }
-
-  historyEmpty.classList.add('hidden');
-  historyList.classList.remove('hidden');
-  historyFilter.classList.remove('hidden');
-
-  // 按用户选择的查看范围截取：最近 7 / 30 天，或全部
-  let limit = list.length;
-  if (historyRange === '7') limit = 7;
-  else if (historyRange === '30') limit = 30;
-  const visible = list.slice(0, limit);
-
-  visible.forEach((item, index) => {
-    // dayNo 基于完整列表的序号，保证「第 N 天」编号正确
-    const dayNo = currentState.eliminatedCount - index;
-    const li = document.createElement('li');
-    li.className = 'history-item';
-
-    const badge = document.createElement('span');
-    badge.className = 'history-badge';
-    badge.textContent = `第 ${dayNo} 天`;
-
-    const date = document.createElement('span');
-    date.className = 'history-date';
-    date.textContent = formatDate(item.date);
-
-    const time = document.createElement('span');
-    time.className = 'history-time';
-    time.textContent = item.time || '';
-
-    li.appendChild(badge);
-    li.appendChild(date);
-    li.appendChild(time);
-    historyList.appendChild(li);
-  });
+  const count = currentState ? (currentState.eliminatedCount || 0) : 0;
+  historySummary.textContent = count > 0 ? `已打卡 ${count} 天` : '还没有打卡记录';
 }
 
 /** 渲染今日待办列表 */
@@ -640,10 +595,6 @@ floatEliminateBtn.addEventListener('click', handleEliminate);
 resetHistoryBtn.addEventListener('click', handleResetHistory);
 editSettingsBtn.addEventListener('click', handleEditSettings);
 historyToggle.addEventListener('click', handleToggleHistory);
-historyFilterSelect.addEventListener('change', () => {
-  historyRange = historyFilterSelect.value;
-  renderHistory();
-});
 
 todoAddBtn.addEventListener('click', handleAddTodo);
 todoInput.addEventListener('keydown', (e) => {
