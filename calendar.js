@@ -24,7 +24,10 @@ const dragEl = $('#calendar-drag');
 let cursor = new Date(); // 当前显示的月份（取当月 1 号）
 let selected = null;     // 选中的日期字符串 YYYY-MM-DD
 let todoDates = {};      // { "YYYY-MM-DD": { done, total } }
-let checkinByDate = {};  // { "YYYY-MM-DD": "HH:MM:SS" } 打卡记录（消除时间）
+let checkinByDate = {};  // { "YYYY-MM-DD": "HH:MM:SS" } 天级打卡（仅用于网格单一 ✓）
+let categories = [];     // 类目列表 [{ id, name, color, createdAt }]
+let categoryById = {};   // { catId: { name, color } }
+let checkinsByDate = {}; // { "YYYY-MM-DD": { catId: { time, timestamp } } } 类目级打卡
 
 // ---------- 工具 ----------
 function toDateStr(date) {
@@ -108,7 +111,7 @@ async function renderDetail() {
   if (!selected) {
     const empty = document.createElement('div');
     empty.className = 'cal-detail-empty';
-    empty.textContent = '点击日期查看当天待办';
+    empty.textContent = '点击日期查看当天打卡与待办';
     calDetailEl.appendChild(empty);
     return;
   }
@@ -118,9 +121,12 @@ async function renderDetail() {
   title.textContent = formatDateLabel(selected);
   calDetailEl.appendChild(title);
 
-  // 打卡记录（消除时间）：有则显示，无则跳过
-  const checkinTime = checkinByDate[selected];
-  if (checkinTime) {
+  // 打卡记录：按类目逐条展示「色点 + 类目名 + 时间」
+  const dayCheckins = checkinsByDate[selected] || {};
+  const catIds = Object.keys(dayCheckins).sort(
+    (a, b) => (dayCheckins[a].timestamp || 0) - (dayCheckins[b].timestamp || 0)
+  );
+  if (catIds.length > 0) {
     const section = document.createElement('div');
     section.className = 'cal-detail-section';
 
@@ -128,21 +134,33 @@ async function renderDetail() {
     sectionTitle.className = 'cal-detail-section-title';
     sectionTitle.textContent = '打卡记录';
 
-    const item = document.createElement('div');
-    item.className = 'cal-detail-checkin';
-
-    const mark = document.createElement('span');
-    mark.className = 'cal-detail-checkin-mark';
-    mark.textContent = '✓';
-
-    const time = document.createElement('span');
-    time.className = 'cal-detail-checkin-time';
-    time.textContent = checkinTime || '--:--:--';
-
-    item.appendChild(mark);
-    item.appendChild(time);
     section.appendChild(sectionTitle);
-    section.appendChild(item);
+
+    catIds.forEach((cid) => {
+      const cat = categoryById[cid];
+      const info = dayCheckins[cid] || {};
+
+      const item = document.createElement('div');
+      item.className = 'cal-detail-checkin-item';
+
+      const dot = document.createElement('span');
+      dot.className = 'cal-detail-cat-dot';
+      dot.style.background = cat ? cat.color : '#c2c7d1';
+
+      const name = document.createElement('span');
+      name.className = 'cal-detail-cat-name';
+      name.textContent = cat ? cat.name : '已删除类目';
+
+      const time = document.createElement('span');
+      time.className = 'cal-detail-checkin-time';
+      time.textContent = info.time || '--:--:--';
+
+      item.appendChild(dot);
+      item.appendChild(name);
+      item.appendChild(time);
+      section.appendChild(item);
+    });
+
     calDetailEl.appendChild(section);
   }
 
@@ -151,7 +169,7 @@ async function renderDetail() {
 
   if (list.length === 0) {
     // 无待办：若已有打卡记录，则不再追加空提示；否则提示当天没有记录
-    if (!checkinTime) {
+    if (catIds.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'cal-detail-empty';
       empty.textContent = '当天没有记录';
@@ -168,10 +186,24 @@ async function renderDetail() {
     mark.className = 'cal-detail-mark';
     mark.textContent = todo.done ? '✓' : '';
 
+    // 待办类目标签（色点 + 名称）
+    const cat = categoryById[todo.categoryId];
+    const tag = document.createElement('span');
+    tag.className = 'cal-detail-cat-tag';
+    const tagDot = document.createElement('span');
+    tagDot.className = 'cal-detail-cat-tag-dot';
+    tagDot.style.background = cat ? cat.color : '#c2c7d1';
+    const tagName = document.createElement('span');
+    tagName.textContent = cat ? cat.name : '已删除类目';
+    tag.appendChild(tagDot);
+    tag.appendChild(tagName);
+
     const text = document.createElement('span');
+    text.className = 'cal-detail-text';
     text.textContent = todo.text;
 
     item.appendChild(mark);
+    item.appendChild(tag);
     item.appendChild(text);
     calDetailEl.appendChild(item);
   });
@@ -263,6 +295,15 @@ async function init() {
   try {
     const overview = await window.api.getCalendarOverview();
     todoDates = overview.todoDates || {};
+    categories = overview.categories || [];
+    checkinsByDate = overview.checkinsByDate || {};
+
+    categoryById = {};
+    categories.forEach((c) => {
+      if (c && c.id) categoryById[c.id] = c;
+    });
+
+    // 网格仍以天级 history 生成单一 ✓
     checkinByDate = {};
     (overview.history || []).forEach((entry) => {
       if (entry && entry.date && !checkinByDate[entry.date]) {

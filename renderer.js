@@ -33,6 +33,9 @@ const todoList = $('#todo-list');
 const todoEmpty = $('#todo-empty');
 const todoCalendarToggle = $('#todo-calendar-toggle');
 
+const categoryChips = $('#category-chips');
+const categoryAdd = $('#category-add');
+
 const setupView = $('#setup-view');
 const stage = $('#stage');
 const targetDateInput = $('#target-date-input');
@@ -52,6 +55,7 @@ let historyOpen = false;
 let editing = false; // 是否处于「编辑设置」模式（避免 render 覆盖设置页）
 let panelOpen = false; // 下拉面板是否展开（点击切换，不再 hover）
 let didDrag = false;   // 标记是否刚发生过拖动（用于区分「点击」和「拖动」）
+let categoryInputActive = false; // 是否正在内联输入类目名（新增/重命名），避免重复开输入框
 
 // ---------- 工具函数 ----------
 
@@ -100,6 +104,161 @@ function renderMessage(raw, remaining) {
     .replace(/\bX\b/g, String(remaining));
 }
 
+// ---------- 类目选择 ----------
+
+/** 悬浮条按钮文字较长，类目名超 4 字截断为「…」 */
+function truncateCategoryName(name) {
+  const str = String(name || '');
+  return str.length > 4 ? `${str.slice(0, 4)}…` : str;
+}
+
+/** 渲染类目 chips（色点 + 名称 + hover 删除 ×）；选中项高亮；末位 ＋ 号由 index.html 提供 */
+function renderCategories() {
+  const s = currentState;
+  categoryChips.innerHTML = '';
+  const categories = (s && s.categories) || [];
+  const currentId = (s && s.currentCategoryId) || (categories[0] && categories[0].id) || '';
+
+  categories.forEach((cat) => {
+    const chip = document.createElement('div');
+    chip.className = 'category-chip' + (cat.id === currentId ? ' active' : '');
+    chip.dataset.id = cat.id;
+
+    const dot = document.createElement('span');
+    dot.className = 'category-dot';
+    dot.style.background = cat.color;
+
+    const name = document.createElement('span');
+    name.className = 'category-name';
+    name.textContent = cat.name;
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'category-del';
+    del.textContent = '×';
+    del.title = '删除类目';
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleDeleteCategory(cat.id);
+    });
+
+    chip.appendChild(dot);
+    chip.appendChild(name);
+    chip.appendChild(del);
+
+    // 单击切换当前类目
+    chip.addEventListener('click', () => {
+      if (cat.id !== currentId) {
+        handleSelectCategory(cat.id);
+      }
+    });
+
+    // 双击重命名
+    chip.addEventListener('dblclick', () => {
+      startRenameCategory(cat);
+    });
+
+    categoryChips.appendChild(chip);
+  });
+}
+
+/** 点击 ＋ 展开内联输入框，新建类目 */
+function startCreateCategory() {
+  if (categoryInputActive) return;
+  categoryInputActive = true;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'category-input';
+  input.placeholder = '类目名（≤12字）';
+  input.maxLength = 12;
+  categoryChips.appendChild(input);
+  input.focus();
+
+  let finished = false;
+  const commit = async () => {
+    if (finished) return;
+    finished = true;
+    categoryInputActive = false;
+    const name = input.value.trim();
+    input.remove();
+    if (name) {
+      await handleCreateCategory(name);
+    }
+  };
+  const cancel = () => {
+    if (finished) return;
+    finished = true;
+    categoryInputActive = false;
+    input.remove();
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  });
+  input.addEventListener('blur', () => {
+    if (!finished) commit();
+  });
+}
+
+/** 双击 chip 展开内联输入框，重命名类目 */
+function startRenameCategory(cat) {
+  if (categoryInputActive) return;
+  const chip = categoryChips.querySelector(`.category-chip[data-id="${cat.id}"]`);
+  if (!chip) return;
+  const nameEl = chip.querySelector('.category-name');
+  if (!nameEl) return;
+
+  categoryInputActive = true;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'category-input';
+  input.value = cat.name;
+  input.maxLength = 12;
+  chip.replaceChild(input, nameEl);
+  input.focus();
+  input.select();
+
+  let finished = false;
+  const commit = async () => {
+    if (finished) return;
+    finished = true;
+    categoryInputActive = false;
+    const name = input.value.trim();
+    if (name && name !== cat.name) {
+      await handleRenameCategory(cat.id, name);
+    } else {
+      renderCategories();
+    }
+  };
+  const cancel = () => {
+    if (finished) return;
+    finished = true;
+    categoryInputActive = false;
+    renderCategories();
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  });
+  input.addEventListener('blur', () => {
+    if (!finished) commit();
+  });
+}
+
 // ---------- 历史折叠 ----------
 
 function setHistoryOpen(open) {
@@ -123,10 +282,15 @@ function togglePanel() {
 
 // ---------- 渲染 ----------
 
-/** 渲染历史记录统计摘要（已打卡 N 天） */
+/** 渲染历史记录统计摘要（已打卡 N 天 · M 个类目） */
 function renderHistory() {
   const count = currentState ? (currentState.eliminatedCount || 0) : 0;
-  historySummary.textContent = count > 0 ? `已打卡 ${count} 天` : '还没有打卡记录';
+  const catCount = currentState ? ((currentState.categories && currentState.categories.length) || 0) : 0;
+  if (count > 0) {
+    historySummary.textContent = `已打卡 ${count} 天 · ${catCount} 个类目`;
+  } else {
+    historySummary.textContent = '还没有打卡记录';
+  }
 }
 
 /** 渲染今日待办列表 */
@@ -247,15 +411,20 @@ function render() {
   // 待办
   renderTodos();
 
-  // 消除按钮状态（悬浮条 + 下拉面板两处同步）
+  // 类目选择条
+  renderCategories();
+
+  // 打卡按钮状态（悬浮条 + 下拉面板两处同步），按「当前类目今日是否已打卡」判定
   const isDone = s.remainingDays <= 0;
-  const eliminated = s.eliminatedToday;
+  const eliminated = s.currentCategoryCheckedToday;
+  const catName = (s.currentCategory && s.currentCategory.name) || '打卡';
 
-  // 按钮文案：优先用户自定义，为空则回退默认
-  const activeText = (s.btnActiveText && s.btnActiveText.trim()) || '忍忍就过去了！';
-  const doneText = (s.btnDoneText && s.btnDoneText.trim()) || '牛逼，又活一天！';
+  // 按钮文案：优先用户自定义，为空则回退默认（活跃态=打卡·类目名）
+  const activeText = (s.btnActiveText && s.btnActiveText.trim()) || `打卡·${catName}`;
+  const floatActiveText = (s.btnActiveText && s.btnActiveText.trim()) || `打卡·${truncateCategoryName(catName)}`;
+  const doneText = (s.btnDoneText && s.btnDoneText.trim()) || '已打卡';
 
-  [eliminateBtn, floatEliminateBtn].forEach((btn) => {
+  const applyBtnState = (btn, active) => {
     if (eliminated) {
       btn.classList.add('disabled');
       btn.disabled = true;
@@ -267,9 +436,12 @@ function render() {
     } else {
       btn.classList.remove('disabled');
       btn.disabled = false;
-      btn.textContent = activeText;
+      btn.textContent = active;
     }
-  });
+  };
+
+  applyBtnState(eliminateBtn, activeText);
+  applyBtnState(floatEliminateBtn, floatActiveText);
 }
 
 // ---------- 粒子动画（克制、柔和） ----------
@@ -345,17 +517,18 @@ async function handleSaveSettings() {
   }
 }
 
-/** 消除今天（悬浮条和下拉面板共用） */
+/** 对当前选中类目打卡（悬浮条和下拉面板共用） */
 async function handleEliminate() {
   if (isAnimating || !currentState) return;
-  if (!currentState.configured || currentState.eliminatedToday) return;
+  if (!currentState.configured || currentState.currentCategoryCheckedToday) return;
   if (currentState.remainingDays <= 0) return;
+  if (!currentState.currentCategory) return;
 
   isAnimating = true;
   eliminateBtn.disabled = true;
   floatEliminateBtn.disabled = true;
 
-  const result = await window.api.eliminateToday();
+  const result = await window.api.eliminateCategory(currentState.currentCategoryId);
 
   if (result.ok) {
     currentState = result.view;
@@ -380,7 +553,7 @@ async function handleResetHistory() {
   if (!currentState || !currentState.configured) return;
   if (currentState.history.length === 0) return;
 
-  const confirmed = window.confirm('确定要清空所有历史消除记录吗？剩余天数将恢复为总天数。');
+  const confirmed = window.confirm('确定要清空所有历史打卡记录吗？剩余天数将恢复为总天数。');
   if (!confirmed) return;
 
   const result = await window.api.resetHistory();
@@ -443,13 +616,13 @@ function handleToggleHistory() {
   setHistoryOpen(!historyOpen);
 }
 
-/** 新增待办 */
+/** 新增待办（默认挂到当前选中类目） */
 async function handleAddTodo() {
   if (!currentState || !currentState.configured) return;
   const text = todoInput.value.trim();
   if (!text) return;
 
-  const result = await window.api.addTodo(text);
+  const result = await window.api.addTodo(text, currentState.currentCategoryId);
   if (result.ok) {
     currentState = result.view;
     todoInput.value = '';
@@ -469,6 +642,58 @@ async function handleToggleTodo(id) {
 /** 删除待办 */
 async function handleDeleteTodo(id) {
   const result = await window.api.deleteTodo(id);
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  }
+}
+
+/** 新建类目 */
+async function handleCreateCategory(name) {
+  if (!currentState) return;
+  const result = await window.api.createCategory(name);
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  } else {
+    window.alert(result.error || '创建失败');
+    render();
+  }
+}
+
+/** 重命名类目 */
+async function handleRenameCategory(id, name) {
+  if (!currentState) return;
+  const result = await window.api.renameCategory(id, name);
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  } else {
+    window.alert(result.error || '重命名失败');
+    render();
+  }
+}
+
+/** 删除类目（需二次确认：会连同其打卡与待办一起清除） */
+async function handleDeleteCategory(id) {
+  if (!currentState) return;
+  const cat = (currentState.categories || []).find((c) => c.id === id);
+  if (!cat) return;
+  const confirmed = window.confirm(`确定删除类目「${cat.name}」吗？\n会同时清除该类目的待办与打卡记录。`);
+  if (!confirmed) return;
+  const result = await window.api.deleteCategory(id);
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  } else {
+    window.alert(result.error || '删除失败');
+  }
+}
+
+/** 切换当前类目 */
+async function handleSelectCategory(id) {
+  if (!currentState || currentState.currentCategoryId === id) return;
+  const result = await window.api.setCurrentCategory(id);
   if (result.ok) {
     currentState = result.view;
     render();
@@ -604,6 +829,8 @@ todoInput.addEventListener('keydown', (e) => {
   }
 });
 todoCalendarToggle.addEventListener('click', handleToggleCalendar);
+
+categoryAdd.addEventListener('click', startCreateCategory);
 
 // 点击悬浮条（消除按钮除外）切换下拉面板；拖动后不切换
 floatBar.addEventListener('click', (e) => {

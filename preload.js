@@ -16,14 +16,26 @@ contextBridge.exposeInMainWorld('api', {
   /** 保存设置：{ totalDays: number, message: string } */
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
 
-  /** 消除今天（同一天只能消除一次） */
-  eliminateToday: () => ipcRenderer.invoke('eliminate-today'),
+  /** 新建类目 */
+  createCategory: (name) => ipcRenderer.invoke('create-category', name),
 
-  /** 清空历史消除记录 */
+  /** 重命名类目 */
+  renameCategory: (id, name) => ipcRenderer.invoke('rename-category', id, name),
+
+  /** 删除类目（连同其打卡与待办一起清除） */
+  deleteCategory: (id) => ipcRenderer.invoke('delete-category', id),
+
+  /** 切换当前类目 */
+  setCurrentCategory: (id) => ipcRenderer.invoke('set-current-category', id),
+
+  /** 对指定类目打卡（每类目每天一次） */
+  eliminateCategory: (categoryId) => ipcRenderer.invoke('eliminate-category', categoryId),
+
+  /** 清空历史打卡记录（history + checkinsByDate） */
   resetHistory: () => ipcRenderer.invoke('reset-history'),
 
-  /** 新增待办 */
-  addTodo: (text) => ipcRenderer.invoke('add-todo', text),
+  /** 新增待办（归属 categoryId，缺省回退当前类目） */
+  addTodo: (text, categoryId) => ipcRenderer.invoke('add-todo', text, categoryId),
 
   /** 切换待办完成状态 */
   toggleTodo: (id) => ipcRenderer.invoke('toggle-todo', id),

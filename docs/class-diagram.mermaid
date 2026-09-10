@@ -1,0 +1,84 @@
+classDiagram
+    class State {
+        +number schemaVersion
+        +number totalDays
+        +string targetDate
+        +string message
+        +string btnActiveText
+        +string btnDoneText
+        +string displayMode
+        +HistoryEntry[] history
+        +Category[] categories
+        +string currentCategoryId
+        +object checkinsByDate
+        +object todosByDate
+    }
+    class Category {
+        +string id
+        +string name
+        +string color
+        +number createdAt
+    }
+    class HistoryEntry {
+        +string id
+        +string date
+        +string time
+        +number timestamp
+    }
+    class Todo {
+        +string id
+        +string text
+        +boolean done
+        +boolean carried
+        +string categoryId
+    }
+    class ViewModel {
+        +boolean configured
+        +number remainingDays
+        +string remainingText
+        +boolean eliminatedToday
+        +boolean currentCategoryCheckedToday
+        +Category[] categories
+        +Category currentCategory
+        +Todo[] todos
+        +object checkinsByDate
+        +object checkinsToday
+        +object todoDates
+        +object history
+    }
+    class MainProcess {
+        +readState() State
+        +writeState(State)
+        +normalizeState(State) State
+        +rolloverTodosIfNeeded(State) boolean
+        +buildViewModel(State) ViewModel
+        +registerIpcHandlers()
+        +getTodayString() string
+        +getTimeString() string
+    }
+    class Renderer {
+        +render()
+        +renderCategories()
+        +renderTodos()
+        +renderHistory()
+        +handleEliminate()
+        +handleAddTodo()
+        +handleCreateCategory()
+        +handleRenameCategory()
+        +handleDeleteCategory()
+        +handleSelectCategory()
+    }
+    class CalendarRenderer {
+        +init()
+        +renderGrid()
+        +renderDetail()
+    }
+
+    State "1" *-- "0..*" Category
+    State "1" *-- "0..*" HistoryEntry
+    State "1" *-- "0..*" Todo : todosByDate
+    Todo "0..*" --> "1" Category : categoryId
+    MainProcess ..> State : 读写
+    MainProcess ..> ViewModel : build
+    Renderer ..> ViewModel : 消费
+    CalendarRenderer ..> ViewModel : 消费

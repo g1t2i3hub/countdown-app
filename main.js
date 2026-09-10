@@ -22,15 +22,29 @@ const BAR_HEIGHT = 60;          // 悬浮条高度
 const WINDOW_SIZE = { width: 300, height: 560 };
 const CALENDAR_SIZE = { width: 360, height: 440 }; // 日历回看弹窗尺寸
 
+/** 数据版本号：任何不等于 2 的存量数据启动时会被清空重建 */
+const SCHEMA_VERSION = 2;
+
+/** 类目调色板（珊瑚红系 8 色，新增类目时循环分配） */
+const CATEGORY_COLORS = ['#ff6b5e', '#ffa26b', '#f5a623', '#4caf7d', '#5b8def', '#8f6bf0', '#e056a0', '#4fb3bf'];
+
+/** 类目数量 / 名称长度上限 */
+const MAX_CATEGORIES = 10;
+const MAX_CATEGORY_NAME_LENGTH = 12;
+
 /** 应用数据的默认结构 */
 const DEFAULT_STATE = {
+  schemaVersion: SCHEMA_VERSION, // 数据版本号
   totalDays: 0,   // 用户设置的总天数
   targetDate: '', // 目标日期（YYYY-MM-DD），设置页通过日历选中；为空时由 totalDays 反推
   message: '',    // 自定义含义文字
-  history: [],    // 历史消除记录：[{ id, date, time, timestamp }]
-  todosByDate: {}, // 按日期分组的待办：{ "YYYY-MM-DD": [{ id, text, done, carried }] }
-  btnActiveText: '',  // 按钮「未消除」时文字（用户自定义）
-  btnDoneText: '',     // 按钮「已消除」时文字（用户自定义）
+  history: [],    // 天级打卡记录：[{ id, date, time, timestamp }]，每天最多一条，倒计时递减依据
+  categories: [], // 打卡类目：[{ id, name, color, createdAt }]
+  currentCategoryId: '', // 当前选中类目 id
+  checkinsByDate: {},    // 类目级打卡记录：{ "YYYY-MM-DD": { catId: { time, timestamp } } }
+  todosByDate: {}, // 按日期分组的待办：{ "YYYY-MM-DD": [{ id, text, done, carried, categoryId }] }
+  btnActiveText: '',  // 按钮「未打卡」时文字（用户自定义）
+  btnDoneText: '',     // 按钮「已打卡」时文字（用户自定义）
   displayMode: 'days'  // 剩余时间显示方式：'days' | 'months' | 'years'
 };
 
@@ -94,20 +108,91 @@ function daysUntil(targetDateStr) {
 }
 
 /**
+ * 生成带前缀的唯一 id：`<prefix>_<时间戳>_<随机串>`。
+ * @param {string} prefix
+ * @returns {string}
+ */
+function generateId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * 生成默认类目「打卡」（颜色取调色板第一色）。
+ * @returns {{id:string,name:string,color:string,createdAt:number}}
+ */
+function makeDefaultCategory() {
+  return {
+    id: generateId('cat'),
+    name: '打卡',
+    color: CATEGORY_COLORS[0],
+    createdAt: Date.now()
+  };
+}
+
+/**
+ * 规范化状态：补齐缺失字段、保证「类目至少 1 个」、
+ * 修正 currentCategoryId 指向、统一 schemaVersion。
+ * @param {object} state
+ * @returns {object}
+ */
+function normalizeState(state) {
+  const s = { ...DEFAULT_STATE, ...(state && typeof state === 'object' ? state : {}) };
+
+  if (!Array.isArray(s.history)) s.history = [];
+  if (!Array.isArray(s.categories)) s.categories = [];
+  if (!s.checkinsByDate || typeof s.checkinsByDate !== 'object' || Array.isArray(s.checkinsByDate)) {
+    s.checkinsByDate = {};
+  }
+  if (!s.todosByDate || typeof s.todosByDate !== 'object' || Array.isArray(s.todosByDate)) {
+    s.todosByDate = {};
+  }
+
+  // 类目字段兜底（旧类目缺字段时补齐）
+  s.categories = s.categories.map((c) => ({
+    id: String((c && c.id) || ''),
+    name: String((c && c.name) || '').trim() || '打卡',
+    color: String((c && c.color) || CATEGORY_COLORS[0]),
+    createdAt: Number(c && c.createdAt) || Date.now()
+  }));
+
+  // 类目至少 1 个：为空时自动补默认类目「打卡」
+  if (s.categories.length === 0) {
+    s.categories = [makeDefaultCategory()];
+  }
+
+  // currentCategoryId 必须是 categories 中存在的 id，否则回退到首个
+  const hasCurrent = s.categories.some((c) => c.id === s.currentCategoryId);
+  if (!hasCurrent) {
+    s.currentCategoryId = s.categories[0].id;
+  }
+
+  s.schemaVersion = SCHEMA_VERSION;
+  return s;
+}
+
+/**
  * 从磁盘读取状态；文件不存在或损坏时回退到默认状态。
- * @returns {object} 合并默认值后的状态对象
+ * schemaVersion !== 2 的旧数据会被丢弃并重建为全新空状态。
+ * @returns {object} 规范化后的状态对象
  */
 function readState() {
   try {
     if (fs.existsSync(dataFilePath)) {
       const raw = fs.readFileSync(dataFilePath, 'utf-8');
       const parsed = JSON.parse(raw);
-      return { ...DEFAULT_STATE, ...parsed };
+      if (parsed && typeof parsed === 'object' && parsed.schemaVersion === SCHEMA_VERSION) {
+        return normalizeState(parsed);
+      }
+      // 版本门禁：旧版数据直接丢弃，写回全新空状态
+      console.warn('[main] 检测到旧版本数据，已清空重建');
+      const fresh = normalizeState({ ...DEFAULT_STATE });
+      writeState(fresh);
+      return fresh;
     }
   } catch (err) {
     console.error('[main] 读取数据失败:', err);
   }
-  return { ...DEFAULT_STATE };
+  return normalizeState({ ...DEFAULT_STATE });
 }
 
 /**
@@ -142,21 +227,7 @@ function rolloverTodosIfNeeded(state) {
     return false;
   }
 
-  // 兼容旧数据结构：若存在旧的 todos 字段，迁移到 todosByDate
-  if (Array.isArray(state.todos) && state.todos.length > 0) {
-    byDate[today] = state.todos.map((t) => ({
-      id: t.id,
-      text: t.text,
-      done: !!t.done,
-      carried: false
-    }));
-    delete state.todos;
-    delete state.todoDate;
-    state.todosByDate = byDate;
-    return true;
-  }
-
-  // 找到昨天未完成的待办，顺延到今天
+  // 找到昨天未完成的待办，顺延到今天（保留 categoryId 归属）
   const yesterday = getYesterdayString();
   const yestTodos = Array.isArray(byDate[yesterday]) ? byDate[yesterday] : [];
   const carried = yestTodos
@@ -165,7 +236,8 @@ function rolloverTodosIfNeeded(state) {
       id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       text: t.text,
       done: false,
-      carried: true
+      carried: true,
+      categoryId: t.categoryId || state.currentCategoryId || (state.categories[0] && state.categories[0].id) || ''
     }));
 
   byDate[today] = carried;
@@ -229,12 +301,26 @@ function buildViewModel(state) {
   const today = getTodayString();
   const eliminatedToday = history.some((h) => h.date === today);
 
+  const categories = Array.isArray(state.categories) ? state.categories : [];
+  const currentCategoryId = state.currentCategoryId || (categories[0] && categories[0].id) || '';
+  const currentCategory = categories.find((c) => c.id === currentCategoryId) || categories[0] || null;
+
+  const checkinsByDate = (state.checkinsByDate && typeof state.checkinsByDate === 'object')
+    ? state.checkinsByDate
+    : {};
+  const checkinsToday = checkinsByDate[today] || {};
+  const currentCategoryCheckedToday = !!(currentCategory && checkinsToday[currentCategory.id]);
+
   const todosByDate = (state.todosByDate && typeof state.todosByDate === 'object')
     ? state.todosByDate
     : {};
-  const todos = Array.isArray(todosByDate[today]) ? todosByDate[today] : [];
+  const allTodayTodos = Array.isArray(todosByDate[today]) ? todosByDate[today] : [];
+  // 主面板只显示「当前选中类目」的今日待办
+  const todos = currentCategory
+    ? allTodayTodos.filter((t) => t.categoryId === currentCategory.id)
+    : [];
 
-  // 构建日历概况：每个有记录的日期 → { done, total }
+  // 构建日历概况：每个有记录的日期 → { done, total }（全类目合计）
   const todoDates = {};
   Object.keys(todosByDate).forEach((date) => {
     const list = todosByDate[date] || [];
@@ -257,6 +343,12 @@ function buildViewModel(state) {
     eliminatedCount,
     eliminatedToday,
     history,
+    categories,
+    currentCategoryId,
+    currentCategory,
+    checkinsByDate,
+    checkinsToday,
+    currentCategoryCheckedToday,
     todos,
     todosByDate,
     todoDates
@@ -544,8 +636,9 @@ function registerIpcHandlers() {
     return buildViewModel(state);
   });
 
-  // 保存设置：设置新倒计时会重置历史记录（视为开启一段新的倒计时）
+  // 保存设置：设置新倒计时会重置打卡/待办，但保留类目（视为开启一段新的倒计时）
   ipcMain.handle('save-settings', (_event, settings) => {
+    const existing = readState();
     const targetDate = String(settings && settings.targetDate ? settings.targetDate : '').trim();
 
     // 优先用目标日期计算天数（保证与日历选中一致）；否则回退用传入的 totalDays
@@ -569,35 +662,51 @@ function registerIpcHandlers() {
       ? settings.displayMode
       : 'days';
     const state = {
+      ...DEFAULT_STATE,
       totalDays,
       targetDate,
       message,
       btnActiveText,
       btnDoneText,
       displayMode,
-      history: []
+      // 保留类目与当前类目；重置打卡与待办
+      categories: existing.categories,
+      currentCategoryId: existing.currentCategoryId,
+      history: [],
+      checkinsByDate: {},
+      todosByDate: {}
     };
     writeState(state);
     return { ok: true, view: buildViewModel(state) };
   });
 
-  // 消除今天：同一天只能消除一次
-  ipcMain.handle('eliminate-today', () => {
+  // 对指定类目打卡（替代原 eliminate-today）：每类目每天一次；
+  // 当天「第一次」任一类目打卡时才写入一条 history，保证剩余天数每天只减 1。
+  ipcMain.handle('eliminate-category', (_event, categoryId) => {
     const state = readState();
+    if (rolloverTodosIfNeeded(state)) {
+      writeState(state);
+    }
+
     const totalDays = Number(state.totalDays) || 0;
+    const cid = String(categoryId || '');
+    const cat = state.categories.find((c) => c.id === cid);
 
     if (totalDays <= 0) {
       return { ok: false, error: '请先设置倒计时', view: buildViewModel(state) };
     }
-
-    const today = getTodayString();
-    const history = Array.isArray(state.history) ? state.history : [];
-
-    if (history.some((h) => h.date === today)) {
-      return { ok: false, error: '今天已经消除过了，明天再来吧', view: buildViewModel(state) };
+    if (!cat) {
+      return { ok: false, error: '类目不存在', view: buildViewModel(state) };
     }
 
-    if (history.length >= totalDays) {
+    const today = getTodayString();
+    const checkinsByDate = state.checkinsByDate || {};
+    const todayCheckins = checkinsByDate[today] || {};
+
+    if (todayCheckins[cid]) {
+      return { ok: false, error: '该分类今天已打卡', view: buildViewModel(state) };
+    }
+    if (state.history.length >= totalDays) {
       return { ok: false, error: '倒计时已全部完成 🎉', view: buildViewModel(state) };
     }
 
@@ -608,22 +717,137 @@ function registerIpcHandlers() {
       timestamp: Date.now()
     };
 
-    // 最新的记录放在最前面
-    const newState = { ...state, history: [entry, ...history] };
+    // 写入类目级打卡
+    todayCheckins[cid] = { time: entry.time, timestamp: entry.timestamp };
+    checkinsByDate[today] = todayCheckins;
+
+    // 当天第一次打卡才写天级 history（倒计时递减依据，每天只减 1）
+    const history = Array.isArray(state.history) ? state.history : [];
+    const isFirstToday = !history.some((h) => h.date === today);
+    const newHistory = isFirstToday ? [entry, ...history] : history;
+
+    const newState = { ...state, history: newHistory, checkinsByDate };
     writeState(newState);
     return { ok: true, entry, view: buildViewModel(newState) };
   });
 
-  // 重置历史记录（剩余天数恢复为总天数）
-  ipcMain.handle('reset-history', () => {
+  // 新建类目（自动分配颜色；名称非空且 ≤ 12 字；类目数量 ≤ 10）
+  ipcMain.handle('create-category', (_event, name) => {
     const state = readState();
-    const newState = { ...state, history: [] };
+    const trimmed = String(name || '').trim();
+
+    if (!trimmed) {
+      return { ok: false, error: '类目名称不能为空', view: buildViewModel(state) };
+    }
+    if (trimmed.length > MAX_CATEGORY_NAME_LENGTH) {
+      return { ok: false, error: `类目名称不能超过 ${MAX_CATEGORY_NAME_LENGTH} 个字`, view: buildViewModel(state) };
+    }
+    if (state.categories.length >= MAX_CATEGORIES) {
+      return { ok: false, error: `最多创建 ${MAX_CATEGORIES} 个类目`, view: buildViewModel(state) };
+    }
+
+    const category = {
+      id: generateId('cat'),
+      name: trimmed,
+      color: CATEGORY_COLORS[state.categories.length % CATEGORY_COLORS.length],
+      createdAt: Date.now()
+    };
+    const categories = [...state.categories, category];
+    // 理论空列表兜底：首个类目设为当前
+    const currentCategoryId = state.categories.length === 0 ? category.id : state.currentCategoryId;
+    const newState = { ...state, categories, currentCategoryId };
+    writeState(newState);
+    return { ok: true, category, view: buildViewModel(newState) };
+  });
+
+  // 重命名类目
+  ipcMain.handle('rename-category', (_event, id, name) => {
+    const state = readState();
+    const cid = String(id || '');
+    const trimmed = String(name || '').trim();
+    const cat = state.categories.find((c) => c.id === cid);
+
+    if (!cat) {
+      return { ok: false, error: '类目不存在', view: buildViewModel(state) };
+    }
+    if (!trimmed) {
+      return { ok: false, error: '类目名称不能为空', view: buildViewModel(state) };
+    }
+    if (trimmed.length > MAX_CATEGORY_NAME_LENGTH) {
+      return { ok: false, error: `类目名称不能超过 ${MAX_CATEGORY_NAME_LENGTH} 个字`, view: buildViewModel(state) };
+    }
+
+    const categories = state.categories.map((c) => (c.id === cid ? { ...c, name: trimmed } : c));
+    const newState = { ...state, categories };
     writeState(newState);
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 新增待办
-  ipcMain.handle('add-todo', (_event, text) => {
+  // 删除类目：连同其打卡与待办一起清除；拒绝删除最后一个类目。
+  ipcMain.handle('delete-category', (_event, id) => {
+    const state = readState();
+    const cid = String(id || '');
+    const cat = state.categories.find((c) => c.id === cid);
+
+    if (!cat) {
+      return { ok: false, error: '类目不存在', view: buildViewModel(state) };
+    }
+    if (state.categories.length <= 1) {
+      return { ok: false, error: '至少保留一个类目', view: buildViewModel(state) };
+    }
+
+    const categories = state.categories.filter((c) => c.id !== cid);
+    // 当前类目被删时回退到首个
+    let currentCategoryId = state.currentCategoryId;
+    if (currentCategoryId === cid) {
+      currentCategoryId = categories[0].id;
+    }
+
+    // 清除该类目的打卡记录
+    const checkinsByDate = {};
+    Object.keys(state.checkinsByDate || {}).forEach((date) => {
+      const dayMap = { ...(state.checkinsByDate[date] || {}) };
+      delete dayMap[cid];
+      if (Object.keys(dayMap).length > 0) checkinsByDate[date] = dayMap;
+    });
+
+    // 清除该类目的待办
+    const todosByDate = {};
+    Object.keys(state.todosByDate || {}).forEach((date) => {
+      const list = (state.todosByDate[date] || []).filter((t) => t.categoryId !== cid);
+      if (list.length > 0) todosByDate[date] = list;
+    });
+
+    const newState = { ...state, categories, currentCategoryId, checkinsByDate, todosByDate };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // 切换当前类目并持久化
+  ipcMain.handle('set-current-category', (_event, id) => {
+    const state = readState();
+    const cid = String(id || '');
+    const exists = state.categories.some((c) => c.id === cid);
+
+    if (!exists) {
+      return { ok: false, error: '类目不存在', view: buildViewModel(state) };
+    }
+
+    const newState = { ...state, currentCategoryId: cid };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // 重置历史记录：清空 history + checkinsByDate（保留类目与待办）
+  ipcMain.handle('reset-history', () => {
+    const state = readState();
+    const newState = { ...state, history: [], checkinsByDate: {} };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // 新增待办（归属 categoryId；缺省回退当前类目 → 首个类目）
+  ipcMain.handle('add-todo', (_event, text, categoryId) => {
     const content = String(text || '').trim();
     if (!content) {
       return { ok: false, error: '待办内容不能为空' };
@@ -634,11 +858,18 @@ function registerIpcHandlers() {
     const today = getTodayString();
     const byDate = state.todosByDate || {};
 
+    // 归属类目：入参 → 当前类目 → 首个类目
+    let cid = String(categoryId || '');
+    if (!state.categories.some((c) => c.id === cid)) {
+      cid = state.currentCategoryId || state.categories[0].id;
+    }
+
     const todo = {
       id: `todo_${Date.now()}`,
       text: content,
       done: false,
-      carried: false
+      carried: false,
+      categoryId: cid
     };
 
     byDate[today] = [...(byDate[today] || []), todo];

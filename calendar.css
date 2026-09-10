@@ -261,6 +261,53 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 按类目逐条展示的打卡项 */
+.cal-detail-checkin-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.cal-detail-cat-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.cal-detail-cat-name {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.cal-detail-checkin-item .cal-detail-checkin-time {
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+/* 待办类目标签 */
+.cal-detail-cat-tag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #f5f6f8;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.cal-detail-cat-tag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
 .cal-detail-item {
   display: flex;
   align-items: center;
@@ -268,6 +315,12 @@ body {
   padding: 6px 0;
   font-size: 13px;
   color: var(--text);
+}
+
+.cal-detail-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-word;
 }
 
 .cal-detail-item.done {

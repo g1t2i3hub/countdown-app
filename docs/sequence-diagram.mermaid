@@ -1,0 +1,50 @@
+sequenceDiagram
+    participant R as Renderer(主窗口)
+    participant P as Preload(window.api)
+    participant M as MainProcess
+    participant FS as countdown-data.json
+
+    Note over R,M: ① 初始化 + 旧数据迁移
+    R->>P: getState()
+    P->>M: invoke('get-state')
+    M->>FS: readState()
+    alt schemaVersion !== 2
+        M->>M: 丢弃旧数据，返回全新空状态
+        M->>FS: 写回空状态(schemaVersion=2)
+    end
+    M->>M: normalizeState()（补默认类目/修正当前类目）
+    M->>M: rolloverTodosIfNeeded()
+    M->>M: buildViewModel()
+    M-->>R: ViewModel（categories/todos/checkinsToday...）
+    R->>R: render()
+
+    Note over R,M: ② 创建类目
+    R->>P: createCategory("运动")
+    P->>M: invoke('create-category', "运动")
+    M->>FS: writeState(追加 category)
+    M-->>R: { ok, category, view }
+    R->>R: renderCategories()
+
+    Note over R,M: ③ 对当前类目打卡
+    R->>P: eliminateCategory(currentCategoryId)
+    P->>M: invoke('eliminate-category', categoryId)
+    M->>FS: writeState(checkinsByDate[今天][cat]=记录；若当天首卡再写 history)
+    M-->>R: { ok, entry, view }
+    R->>R: render() + 粒子动画
+
+    Note over R,M: ④ 添加待办到当前类目
+    R->>P: addTodo(text, currentCategoryId)
+    P->>M: invoke('add-todo', text, categoryId)
+    M->>FS: writeState(todosByDate[今天] 追加 {categoryId})
+    M-->>R: { ok, todo, view }
+    R->>R: renderTodos()
+
+    Note over R,M: ⑤ 日历回看（多类目）
+    R->>P: openCalendar()
+    P->>M: invoke('open-calendar')
+    M-->>P: 打开日历弹窗
+    Note over R,M: 日历窗口内：
+    R->>P: getCalendarOverview()
+    P->>M: invoke('get-calendar-overview')
+    M-->>R: ViewModel（含 categories + checkinsByDate）
+    R->>R: renderGrid() + renderDetail()（按类目展示打卡/待办）

@@ -236,6 +236,140 @@ body {
   font-weight: 600;
 }
 
+/* ============================================================
+   类目选择条（彩色 chips + 末位 ＋ 新增）
+   ============================================================ */
+.category-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.category-chips {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.category-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #fafbfc;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  max-width: 110px;
+}
+
+.category-chip:hover {
+  background: var(--accent-soft);
+}
+
+.category-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.category-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.category-chip.active .category-dot {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.55);
+}
+
+.category-name {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-del {
+  flex: 0 0 auto;
+  display: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.85;
+  font-family: inherit;
+}
+
+.category-chip:hover .category-del {
+  display: inline-flex;
+}
+
+.category-chip.active .category-del:hover {
+  opacity: 1;
+}
+
+.category-add {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+
+.category-add:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.category-input {
+  flex: 0 1 110px;
+  min-width: 70px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  outline: none;
+  color: var(--text);
+  background: #fff;
+  user-select: text;
+}
+
+/* 重命名时输入框替换 chip 内的名称，样式更紧凑 */
+.category-chip .category-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 60px;
+  padding: 1px 3px;
+  border: none;
+  border-bottom: 1.5px solid var(--accent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.category-chip.active .category-input {
+  color: #fff;
+}
+
 /* 消除按钮 */
 .btn-eliminate {
   width: 100%;
