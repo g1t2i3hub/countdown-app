@@ -84,10 +84,10 @@ contextBridge.exposeInMainWorld('api', {
   // ---------- 系统 ----------
   /** 设置开机自启动 */
   setAutoLaunch: (enabled) => ipcRenderer.invoke('set-auto-launch', enabled),
-  /** 设置大字模式开关 */
-  setBigText: (enabled) => ipcRenderer.invoke('set-big-text', enabled),
-  /** 切换大字模式 */
-  toggleBigText: () => ipcRenderer.invoke('toggle-big-text'),
+  /** 打开系统设置窗口 */
+  openSystem: () => ipcRenderer.invoke('open-system'),
+  /** 关闭系统设置窗口 */
+  closeSystem: () => ipcRenderer.invoke('close-system'),
 
   // ---------- 番茄钟 ----------
   /** 打开番茄钟窗口 */

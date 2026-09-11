@@ -108,7 +108,7 @@ function computeStreakFromHistory(history, todayStr) {
 /**
  * v2 → v3 迁移。
  * 把 v2 顶层单目标字段下沉进 targets[0]，theme/alarms 保留顶层，
- * streak 由 history 计算，pomodoro/autoLaunch/bigTextMode 使用默认值。
+ * streak 由 history 计算，pomodoro/autoLaunch 使用默认值。
  *
  * @param {object} obj v2 状态对象
  * @returns {object} v3 状态对象（未 normalize，交由主进程 normalizeState 兜底）
@@ -163,8 +163,7 @@ function migrateV2toV3(obj) {
     alarms: Array.isArray(v2.alarms) ? v2.alarms : [],
     streak,
     pomodoro: { workMin: 25, breakMin: 5, cycles: 4 },
-    autoLaunch: false,
-    bigTextMode: false
+    autoLaunch: false
   };
 }
 

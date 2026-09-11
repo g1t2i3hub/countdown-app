@@ -90,10 +90,7 @@ const pomodoroWorkInput = $('#pomodoro-work-input');
 const pomodoroBreakInput = $('#pomodoro-break-input');
 const pomodoroCyclesInput = $('#pomodoro-cycles-input');
 const pomodoroStartBtn = $('#pomodoro-start-btn');
-const backupBtn = $('#backup-btn');
-const restoreBtn = $('#restore-btn');
-const bigtextBtn = $('#bigtext-btn');
-const autoLaunchCheck = $('#auto-launch-check');
+const floatSystemBtn = $('#float-system-btn');
 
 // ---------- 状态 ----------
 let currentState = null;
@@ -751,14 +748,6 @@ function renderPomodoroStatus(status) {
   pomodoroStatusEl.classList.add('running');
 }
 
-/** 渲染系统区（自启动 / 大字模式开关） */
-function renderSystem() {
-  if (!currentState) return;
-  autoLaunchCheck.checked = !!currentState.autoLaunch;
-  bigtextBtn.textContent = currentState.bigTextMode ? '关闭大字模式' : '大字模式';
-  bigtextBtn.classList.toggle('active', !!currentState.bigTextMode);
-}
-
 /** 根据当前状态刷新整个界面 */
 function render() {
   if (!currentState) return;
@@ -805,7 +794,6 @@ function render() {
   renderAlarms();
   renderFloatAlarm();
   renderPomodoroSettings();
-  renderSystem();
 
   // 打卡按钮状态（悬浮条 + 下拉面板两处同步）
   const isDone = !s.isCountup && s.remainingDays <= 0;
@@ -1206,50 +1194,8 @@ async function handleStartPomodoro() {
   }
 }
 
-async function handleBackup() {
-  const result = await window.api.backupData();
-  if (result.ok) {
-    window.alert('备份成功：\n' + result.path);
-  } else if (result.error && result.error !== '已取消') {
-    window.alert(result.error || '备份失败');
-  }
-}
-
-async function handleRestore() {
-  const picked = await window.api.pickRestoreFile();
-  if (!picked.ok) {
-    if (picked.error && picked.error !== '已取消') window.alert(picked.error || '选择失败');
-    return;
-  }
-  const confirmed = window.confirm(`确定用备份文件「${picked.fileName}」恢复数据吗？\n当前数据将被覆盖。`);
-  if (!confirmed) return;
-  const result = await window.api.applyRestore();
-  if (result.ok) {
-    currentState = result.view;
-    render();
-    window.alert('恢复成功');
-  } else {
-    window.alert(result.error || '恢复失败');
-  }
-}
-
-async function handleToggleAutoLaunch() {
-  const result = await window.api.setAutoLaunch(autoLaunchCheck.checked);
-  if (result.ok) {
-    currentState = result.view;
-    render();
-  } else {
-    window.alert(result.error || '设置失败');
-    autoLaunchCheck.checked = !autoLaunchCheck.checked;
-  }
-}
-
-async function handleToggleBigText() {
-  const result = await window.api.toggleBigText();
-  if (result.ok) {
-    currentState = result.view;
-    render();
-  }
+async function handleOpenSystem() {
+  await window.api.openSystem();
 }
 
 // ---------- 初始化 ----------
@@ -1428,10 +1374,7 @@ alarmDurationInput.addEventListener('keydown', (e) => {
 // 番茄钟 / 系统
 pomodoroOpenBtn.addEventListener('click', handleOpenPomodoro);
 pomodoroStartBtn.addEventListener('click', handleStartPomodoro);
-backupBtn.addEventListener('click', handleBackup);
-restoreBtn.addEventListener('click', handleRestore);
-bigtextBtn.addEventListener('click', handleToggleBigText);
-autoLaunchCheck.addEventListener('change', handleToggleAutoLaunch);
+floatSystemBtn.addEventListener('click', handleOpenSystem);
 
 // 主进程通知：闹钟触发
 window.api.onAlarmTriggered(() => {
@@ -1451,10 +1394,11 @@ window.api.onPomodoroTick((status) => {
   renderPomodoroStatus(status);
 });
 
-// 点击悬浮条（消除按钮除外）切换下拉面板；拖动后不切换
+// 点击悬浮条（消除按钮、系统图标除外）切换下拉面板；拖动后不切换
 floatBar.addEventListener('click', (e) => {
   if (didDrag) return;
   if (e.target.closest('.float-eliminate')) return;
+  if (e.target.closest('.float-system')) return;
   togglePanel();
 });
 

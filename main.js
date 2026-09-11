@@ -7,7 +7,7 @@
  *  - 创建应用窗口（contextIsolation: true, nodeIntegration: false）
  *  - 管理数据文件的读写（存放在 app.getPath('userData') 目录）
  *  - 通过 IPC 暴露安全的增删改查接口给渲染进程
- *  - 番茄钟内存运行态 + 大字模式 / 番茄钟子窗口
+ *  - 番茄钟内存运行态 + 系统设置 / 番茄钟子窗口
  */
 
 const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, dialog, Notification } = require('electron');
@@ -24,7 +24,7 @@ const BAR_HEIGHT = 60;          // 悬浮条高度
 const WINDOW_SIZE = { width: 300, height: 640 };
 const CALENDAR_SIZE = { width: 380, height: 640 }; // 日历回看弹窗尺寸（v3 增加统计区）
 const POMODORO_SIZE = { width: 300, height: 300 }; // 番茄钟子窗口尺寸
-const BIGTEXT_SIZE = { width: 340, height: 220 };  // 大字模式子窗口尺寸
+const SYSTEM_SIZE = { width: 280, height: 240 };   // 系统设置子窗口尺寸
 
 /** 数据版本号：任何不等于 3 的存量数据按版本迁移或重建 */
 const SCHEMA_VERSION = 3;
@@ -45,14 +45,13 @@ const DEFAULT_STATE = {
   alarms: [],                    // 闹钟列表（顶层全局）
   streak: { current: 0, longest: 0, lastCheckinDate: '' }, // 跨目标合并的连续打卡
   pomodoro: { workMin: 25, breakMin: 5, cycles: 4 },       // 番茄钟设置
-  autoLaunch: false,             // 开机自启动
-  bigTextMode: false             // 大字模式开关
+  autoLaunch: false              // 开机自启动
 };
 
 let mainWindow = null;
 let calendarWindow = null;
 let pomodoroWindow = null;
-let bigTextWindow = null;
+let systemWindow = null;
 let dataFilePath = null;
 let tray = null;        // 系统托盘图标（常驻，避免被 GC 回收导致图标消失）
 let isQuitting = false; // 是否正在真正退出应用（用于区分「关闭窗口=隐藏」与「托盘退出」）
@@ -269,7 +268,6 @@ function normalizeState(state) {
   };
 
   s.autoLaunch = !!s.autoLaunch;
-  s.bigTextMode = !!s.bigTextMode;
 
   // 目标至少 1 个
   if (s.targets.length === 0) {
@@ -592,7 +590,7 @@ function buildStatsSummary(target) {
  * currentCategoryId/currentCategory/checkinsByDate/checkinsToday/
  * currentCategoryCheckedToday/todos/todosByDate/todoDates/configured/eliminatedCount/
  * eliminatedToday/alarms），并新增 currentTarget/targets 摘要/floatTarget/streak/
- * pomodoro/autoLaunch/bigTextMode/stats。
+ * pomodoro/autoLaunch/stats。
  */
 function buildViewModel(state) {
   const targets = Array.isArray(state.targets) ? state.targets : [];
@@ -628,7 +626,6 @@ function buildViewModel(state) {
     streak: state.streak || { current: 0, longest: 0, lastCheckinDate: '' },
     pomodoro: state.pomodoro || { workMin: 25, breakMin: 5, cycles: 4 },
     autoLaunch: !!state.autoLaunch,
-    bigTextMode: !!state.bigTextMode,
     currentTargetId,
     targets: targetSummaries,
     floatTarget,
@@ -842,7 +839,7 @@ function setPanelExpanded(expanded) {
 function positionCalendarWindow() {
   if (!calendarWindow || calendarWindow.isDestroyed()) return;
   const display = screen.getPrimaryDisplay();
-  const { x, y, width } = display.workArea;
+  const { x, y, width, height } = display.workArea;
   const margin = 16;
   const gap = 12;
 
@@ -1118,8 +1115,8 @@ function createTray() {
       click: () => openPomodoroWindow()
     },
     {
-      label: '大字模式',
-      click: () => toggleBigText()
+      label: '系统设置',
+      click: () => openSystemWindow()
     },
     {
       label: '备份数据',
@@ -1335,20 +1332,20 @@ function openPomodoroWindow() {
   });
 }
 
-// ---------- 大字模式 ----------
+// ---------- 系统设置 ----------
 
-/** 打开（或聚焦）大字模式子窗口 */
-function openBigTextWindow() {
-  if (bigTextWindow && !bigTextWindow.isDestroyed()) {
-    bigTextWindow.show();
-    bigTextWindow.focus();
+/** 打开（或聚焦）系统设置子窗口 */
+function openSystemWindow() {
+  if (systemWindow && !systemWindow.isDestroyed()) {
+    systemWindow.show();
+    systemWindow.focus();
     return;
   }
 
-  bigTextWindow = new BrowserWindow({
-    width: BIGTEXT_SIZE.width,
-    height: BIGTEXT_SIZE.height,
-    title: '大字模式',
+  systemWindow = new BrowserWindow({
+    width: SYSTEM_SIZE.width,
+    height: SYSTEM_SIZE.height,
+    title: '系统设置',
     frame: false,
     transparent: true,
     hasShadow: false,
@@ -1364,42 +1361,24 @@ function openBigTextWindow() {
     }
   });
 
-  bigTextWindow.setMenuBarVisibility(false);
+  systemWindow.setMenuBarVisibility(false);
   if (process.platform === 'win32') {
-    bigTextWindow.setAlwaysOnTop(true, 'screen-saver');
+    systemWindow.setAlwaysOnTop(true, 'screen-saver');
   }
 
-  bigTextWindow.loadFile(path.join(__dirname, 'bigtext.html'), {
+  systemWindow.loadFile(path.join(__dirname, 'system.html'), {
     query: { theme: readState().theme || 'light' }
   });
 
-  bigTextWindow.once('ready-to-show', () => {
-    centerWindow(bigTextWindow, BIGTEXT_SIZE.width, BIGTEXT_SIZE.height);
-    bigTextWindow.show();
+  systemWindow.once('ready-to-show', () => {
+    centerWindow(systemWindow, SYSTEM_SIZE.width, SYSTEM_SIZE.height);
+    systemWindow.show();
+    systemWindow.focus();
   });
 
-  bigTextWindow.on('closed', () => {
-    bigTextWindow = null;
+  systemWindow.on('closed', () => {
+    systemWindow = null;
   });
-}
-
-/** 根据 bigTextMode 同步大字窗口开关 */
-function syncBigTextWindow(enabled) {
-  if (enabled) {
-    openBigTextWindow();
-  } else if (bigTextWindow && !bigTextWindow.isDestroyed()) {
-    bigTextWindow.close();
-  }
-}
-
-/** 切换大字模式（托盘菜单复用） */
-function toggleBigText() {
-  const state = readState();
-  const value = !state.bigTextMode;
-  const newState = { ...state, bigTextMode: value };
-  writeState(newState);
-  syncBigTextWindow(value);
-  return { ok: true, view: buildViewModel(newState) };
 }
 
 /** 窗口居中 */
@@ -2075,7 +2054,7 @@ function registerIpcHandlers() {
     }
   });
 
-  // ================= 开机自启动 / 大字模式 =================
+  // ================= 开机自启动 / 系统设置 =================
 
   ipcMain.handle('set-auto-launch', (_event, enabled) => {
     const state = readState();
@@ -2090,17 +2069,16 @@ function registerIpcHandlers() {
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  ipcMain.handle('set-big-text', (_event, enabled) => {
-    const state = readState();
-    const value = !!enabled;
-    const newState = { ...state, bigTextMode: value };
-    writeState(newState);
-    syncBigTextWindow(value);
-    return { ok: true, view: buildViewModel(newState) };
+  ipcMain.handle('open-system', () => {
+    openSystemWindow();
+    return { ok: true };
   });
 
-  ipcMain.handle('toggle-big-text', () => {
-    return toggleBigText();
+  ipcMain.handle('close-system', () => {
+    if (systemWindow && !systemWindow.isDestroyed()) {
+      systemWindow.close();
+    }
+    return { ok: true };
   });
 
   // ================= 番茄钟 =================
@@ -2184,8 +2162,8 @@ function registerIpcHandlers() {
         click: () => openPomodoroWindow()
       },
       {
-        label: '大字模式',
-        click: () => toggleBigText()
+        label: '系统设置',
+        click: () => openSystemWindow()
       },
       {
         label: '备份数据',
@@ -2217,10 +2195,9 @@ app.whenReady().then(() => {
   createTray();
   startAlarmTimer(); // 启动闹钟检查
 
-  // 初始化番茄钟运行态设置 + 恢复大字模式窗口
+  // 初始化番茄钟运行态设置
   const initialState = readState();
   pomodoroRuntime.settings = { ...initialState.pomodoro };
-  syncBigTextWindow(initialState.bigTextMode);
 
   // macOS：点击 Dock 图标且无窗口时重新创建窗口
   app.on('activate', () => {
@@ -2260,7 +2237,7 @@ app.on('will-quit', () => {
   if (pomodoroWindow && !pomodoroWindow.isDestroyed()) {
     pomodoroWindow.close();
   }
-  if (bigTextWindow && !bigTextWindow.isDestroyed()) {
-    bigTextWindow.close();
+  if (systemWindow && !systemWindow.isDestroyed()) {
+    systemWindow.close();
   }
 });

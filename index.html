@@ -19,6 +19,7 @@
       </div>
       <span class="float-alarm hidden" id="float-alarm">⏰</span>
       <button class="float-eliminate" id="float-eliminate-btn">忍忍就过去了！</button>
+      <button class="float-system" id="float-system-btn" type="button" title="系统设置">⚙</button>
       <span class="float-chevron">▾</span>
     </div>
 
@@ -88,22 +89,6 @@
           <label class="pomodoro-field"><span>循环</span><input id="pomodoro-cycles-input" type="number" min="1" max="12" step="1" /><span>次</span></label>
         </div>
         <button class="toolbar-btn" id="pomodoro-start-btn" type="button">开始专注</button>
-      </div>
-
-      <!-- 系统区：备份 / 恢复 / 自启动 / 大字模式 -->
-      <div class="tool-section" id="system-section">
-        <div class="tool-section-head">
-          <span class="tool-section-title">⚙ 系统</span>
-        </div>
-        <div class="system-tools">
-          <button class="toolbar-btn" id="backup-btn" type="button">备份数据</button>
-          <button class="toolbar-btn" id="restore-btn" type="button">恢复备份</button>
-          <button class="toolbar-btn" id="bigtext-btn" type="button">大字模式</button>
-          <label class="switch-row">
-            <input id="auto-launch-check" type="checkbox" />
-            <span>开机自启动</span>
-          </label>
-        </div>
       </div>
 
       <!-- 底部工具栏 -->

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>系统设置</title>
+  <link rel="stylesheet" href="system.css" />
+</head>
+<body>
+  <div class="system-card" id="system-card">
+    <div class="system-drag">
+      <span class="system-title">⚙ 系统设置</span>
+      <button class="system-close" id="system-close" type="button" title="关闭">×</button>
+    </div>
+
+    <div class="system-body">
+      <button class="system-btn" id="backup-btn" type="button">📦 备份数据</button>
+      <button class="system-btn" id="restore-btn" type="button">📥 恢复备份</button>
+
+      <label class="switch-row">
+        <input id="auto-launch-check" type="checkbox" />
+        <span>开机自启动</span>
+      </label>
+
+      <p class="system-hint" id="system-hint"></p>
+    </div>
+  </div>
+
+  <script src="system.js"></script>
+</body>
+</html>
