@@ -1,38 +1,55 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-page-node-id="hCSzOsH17M8tsGga7HAEWA">
-<head data-page-node-id="a8q3KUm5W7fR2JRDjUVSF4">
-  <meta charset="UTF-8" data-page-node-id="Id0TEEYcS5vcTufBSUyg8D" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="EM3l3cVayrqmjWSUHvwAKw" />
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" data-page-node-id="Mf8EHnRbgQ9xdNHjRJpTQ3" />
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
   <title>打卡回看</title>
-  <link rel="stylesheet" href="calendar.css" data-page-node-id="7DbGr6YETMcIhrn0fuFhPC" />
+  <link rel="stylesheet" href="calendar.css" />
 </head>
-<body data-page-node-id="jH9NmOtukpXALID2X6BUQr">
-  <div class="calendar-window" id="calendar-window" data-page-node-id="P5fepuPoiwDspXIfO0Z7G6">
+<body>
+  <div class="calendar-window" id="calendar-window">
     <!-- 顶部：标题 + 关闭按钮（可拖动） -->
-    <div class="calendar-drag" id="calendar-drag" data-page-node-id="7RxFXYp6rCTQyeIofFPeHX">
-      <span class="calendar-title" data-page-node-id="FSLdpnZyzuy9010PCuDAfz">📅 打卡回看</span>
-      <button class="calendar-close" id="calendar-close" type="button" aria-label="关闭" data-page-node-id="mABBzpR0FHeBQbh1Xx0b2z">×</button>
+    <div class="calendar-drag" id="calendar-drag">
+      <span class="calendar-title">📅 打卡回看</span>
+      <button class="calendar-close" id="calendar-close" type="button" aria-label="关闭">×</button>
     </div>
 
     <!-- 月份导航 -->
-    <div class="cal-header" data-page-node-id="73w6FJnNdU0fRv8g4N1gFG">
-      <button class="cal-nav" id="cal-prev" type="button" data-page-node-id="8YgFpxYq8CxCDjvR2oHTef">‹</button>
-      <span class="cal-title" id="cal-title" data-page-node-id="V7RJwxFVcHVf2YSKZBrZQv"></span>
-      <button class="cal-nav" id="cal-next" type="button" data-page-node-id="pTuK2V1WbpOtgTdKiLZhhn">›</button>
+    <div class="cal-header">
+      <button class="cal-nav" id="cal-prev" type="button">‹</button>
+      <span class="cal-title" id="cal-title"></span>
+      <button class="cal-nav" id="cal-next" type="button">›</button>
     </div>
 
     <!-- 星期表头 -->
-    <div class="cal-weekdays" id="cal-weekdays" data-page-node-id="Kba4kHrE8vBVn3cFaeBetc"></div>
+    <div class="cal-weekdays" id="cal-weekdays"></div>
 
     <!-- 日期网格 -->
-    <div class="cal-grid" id="cal-grid" data-page-node-id="rqZe9Qf0rrFMUyooj16MzC"></div>
+    <div class="cal-grid" id="cal-grid"></div>
+
+    <!-- 统计区（周/月切换 + 柱状图 + 环形图） -->
+    <div class="cal-stats">
+      <div class="cal-stats-head">
+        <span class="cal-stats-title">📊 统计</span>
+        <div class="cal-stats-tabs">
+          <button class="cal-stats-tab active" id="stats-week-btn" type="button">周</button>
+          <button class="cal-stats-tab" id="stats-month-btn" type="button">月</button>
+        </div>
+      </div>
+      <canvas class="stats-canvas" id="stats-bar-canvas"></canvas>
+      <div class="cal-stats-row">
+        <canvas class="stats-canvas donut" id="stats-donut-canvas"></canvas>
+        <div class="stats-legend" id="stats-legend"></div>
+      </div>
+    </div>
 
     <!-- 选中日期详情 -->
-    <div class="cal-detail" id="cal-detail" data-page-node-id="h5ZCj786ZQIrzwkEoEbFKP"></div>
+    <div class="cal-detail" id="cal-detail"></div>
   </div>
 
+  <script src="stats.js"></script>
   <script src="calendar.js"></script>
 </body>
 </html>

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>大字模式</title>
+  <link rel="stylesheet" href="bigtext.css" />
+</head>
+<body>
+  <div class="bigtext-card" id="bigtext-card">
+    <div class="bigtext-close-wrap">
+      <button class="bigtext-close" id="bigtext-close" type="button" aria-label="关闭大字模式">×</button>
+    </div>
+    <div class="bigtext-label" id="bigtext-label">倒数日</div>
+    <div class="bigtext-value" id="bigtext-value">--</div>
+    <div class="bigtext-unit" id="bigtext-unit">天</div>
+  </div>
+
+  <script src="bigtext.js"></script>
+</body>
+</html>

@@ -1,186 +1,242 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-page-node-id="o5D0FAKpc8dkuM3KbXS2vz">
-<head data-page-node-id="OGdumkjr4n7rGOefOIE2DO">
-  <meta charset="UTF-8" data-page-node-id="5DAmGPp1JB31OOMv0zVh71" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="C7BHYcoAOnhs68dFhL3CZA" />
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" data-page-node-id="EkKUY3IHBJZK8jl3C7eL8j" />
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
   <title>倒数日</title>
-  <link rel="stylesheet" href="styles.css" data-page-node-id="R95TBu4BwxRL6NnRcAz9eb" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
-<body data-page-node-id="5UnDduRoNt3Ah83jHVgYgR">
-  <!-- 整块是透明窗口；内部悬浮条置顶，下拉面板通过 hover 在窗口内滑出 -->
-  <div class="stage" id="stage" data-page-node-id="eF9Wz0vnitNw4KPxVBLQsE">
-    <!-- 悬浮条（常驻显示） -->
-    <div class="float-bar" id="float-bar" data-page-node-id="lKT4i1qsC0hup8i00sWrzx">
-      <div class="float-drag" data-page-node-id="GhMyLPkUinzoylhQsc8oCa">
-        <span class="float-days" id="float-days" data-page-node-id="18OCCCw6sSVeQgRdoemgYj">--</span>
-        <span class="float-unit" id="float-unit" data-page-node-id="ikyQQlHV7jcmukgYS2dF7S">天</span>
+<body>
+  <!-- 整块是透明窗口；内部悬浮条置顶，下拉面板点击展开在窗口内滑出 -->
+  <div class="stage" id="stage">
+    <!-- 悬浮条（常驻显示，展示「最近到期目标」） -->
+    <div class="float-bar" id="float-bar">
+      <div class="float-drag">
+        <span class="float-days" id="float-days">--</span>
+        <span class="float-unit" id="float-unit">天</span>
       </div>
-      <span class="float-alarm hidden" id="float-alarm" data-page-node-id="floatAlarm00000000000001">⏰</span>
-      <button class="float-eliminate" id="float-eliminate-btn" data-page-node-id="Iv2Y6jYpbmgW1ADcA11na3">忍忍就过去了！</button>
-      <span class="float-chevron" data-page-node-id="b1H8M9hg1BYo4qITOcGx0H">▾</span>
+      <span class="float-alarm hidden" id="float-alarm">⏰</span>
+      <button class="float-eliminate" id="float-eliminate-btn">忍忍就过去了！</button>
+      <span class="float-chevron">▾</span>
     </div>
 
-    <!-- 下拉面板（hover 悬浮条/面板时滑出） -->
-    <div class="dropdown-panel" id="dropdown-panel" data-page-node-id="efVfAvW2C5TFeHcuzut85I">
-      <p class="message-text" id="message-text" data-page-node-id="AdFB9FiToJafJYgVHsEQNa"></p>
-
-      <div class="number-wrap" data-page-node-id="BS4ZaOb8u5ehZ6s3xXtBmu">
-        <span class="number" id="remaining-days" data-page-node-id="svuAi8kRwlxr2ugMeDDQAz">0</span>
-        <span class="number-unit" id="number-unit" data-page-node-id="9xOtCGjh5ZyHakv950EwOp">天</span>
+    <!-- 下拉面板 -->
+    <div class="dropdown-panel" id="dropdown-panel">
+      <!-- 目标选择条（点 chip 切换；双击编辑；末位 ＋ 新建） -->
+      <div class="target-bar" id="target-bar">
+        <div class="target-chips" id="target-chips"></div>
+        <button class="target-add" id="target-add" type="button" title="新建目标">＋</button>
       </div>
 
-      <!-- 类目选择条（点 chip 切换当前类目；双击重命名；末位 ＋ 新增） -->
-      <div class="category-bar" id="category-bar" data-page-node-id="categoryBar0000000000000001">
-        <div class="category-chips" id="category-chips" data-page-node-id="categoryChips0000000000000001"></div>
-        <button class="category-add" id="category-add" type="button" title="新增类目" data-page-node-id="categoryAdd0000000000000001">＋</button>
+      <p class="message-text" id="message-text"></p>
+
+      <!-- 连续打卡火焰角标 -->
+      <div class="streak-badge hidden" id="streak-badge">
+        🔥 连续 <span id="streak-count">0</span> 天 · 最长 <span id="streak-longest">0</span> 天
       </div>
 
-      <button class="btn-eliminate" id="eliminate-btn" data-page-node-id="aRCCHkU7NCfXSqzvv4ECPP">忍忍就过去了！</button>
+      <div class="number-wrap">
+        <span class="number" id="remaining-days">0</span>
+        <span class="number-unit" id="number-unit">天</span>
+      </div>
+
+      <!-- 类目选择条 -->
+      <div class="category-bar" id="category-bar">
+        <div class="category-chips" id="category-chips"></div>
+        <button class="category-add" id="category-add" type="button" title="新增类目">＋</button>
+      </div>
+
+      <button class="btn-eliminate" id="eliminate-btn">忍忍就过去了！</button>
 
       <!-- 今日待办 -->
-      <div class="todo-section" id="todo-section" data-page-node-id="todoSection0000000000000001">
-        <div class="todo-add-row" data-page-node-id="todoAddRow000000000000000001">
+      <div class="todo-section" id="todo-section">
+        <div class="todo-add-row">
           <input id="todo-input" class="input todo-input" type="text"
-                 placeholder="添加今日待办…" autocomplete="off" maxlength="80" data-page-node-id="todoInput000000000000000001" />
-          <button id="todo-add-btn" class="btn todo-add-btn" type="button" data-page-node-id="todoAddBtn000000000000000001">＋</button>
+                 placeholder="添加今日待办…" autocomplete="off" maxlength="80" />
+          <button id="todo-add-btn" class="btn todo-add-btn" type="button">＋</button>
         </div>
-        <ul class="todo-list" id="todo-list" data-page-node-id="todoList000000000000000001"></ul>
-        <div class="todo-empty" id="todo-empty" data-page-node-id="todoEmpty000000000000000001">今天还没有待办</div>
+        <ul class="todo-list" id="todo-list"></ul>
+        <div class="todo-empty" id="todo-empty">今天还没有待办</div>
 
-        <!-- 日历回看（点击打开独立悬浮弹窗） -->
-        <button class="todo-calendar-toggle" id="todo-calendar-toggle" type="button" data-page-node-id="todoCalToggle000000000000001">
-          <span data-page-node-id="todoCalToggleLabel0000000001">📅 回看历史</span>
+        <button class="todo-calendar-toggle" id="todo-calendar-toggle" type="button">
+          <span>📅 回看历史与统计</span>
         </button>
       </div>
 
       <!-- 闹钟区 -->
-      <div class="alarm-section" id="alarm-section" data-page-node-id="alarmSection000000000000001">
-        <div class="alarm-section-head" data-page-node-id="alarmHead000000000000001">
-          <span class="alarm-section-title" data-page-node-id="alarmTitle000000000000001">⏰ 闹钟</span>
-          <button class="alarm-add-btn" id="alarm-add-btn" type="button" data-page-node-id="alarmAddBtn000000000000001">＋ 新建</button>
+      <div class="alarm-section" id="alarm-section">
+        <div class="alarm-section-head">
+          <span class="alarm-section-title">⏰ 闹钟</span>
+          <button class="alarm-add-btn" id="alarm-add-btn" type="button">＋ 新建</button>
         </div>
-        <div class="alarm-list" id="alarm-list" data-page-node-id="alarmList000000000000001">
-          <!-- 由 renderer.js 渲染闹钟列表 -->
-        </div>
-        <div class="alarm-empty" id="alarm-empty" data-page-node-id="alarmEmpty000000000000001">还没有闹钟，点「新建」添加</div>
+        <div class="alarm-list" id="alarm-list"></div>
+        <div class="alarm-empty" id="alarm-empty">还没有闹钟，点「新建」添加</div>
       </div>
 
-      <!-- 底部工具栏：修改设置 / 重置（独立于历史记录） -->
-      <div class="footer-toolbar" data-page-node-id="footerToolbar00000000000001">
-        <button class="toolbar-btn" id="edit-settings-btn" type="button" data-page-node-id="twEAzVCsZgTeDq2wrMpUlg">⚙ 修改设置</button>
-        <button class="toolbar-btn" id="reset-history-btn" type="button" data-page-node-id="YVwHAtHyHjdv4ERftFVMcP">↺ 重置</button>
+      <!-- 番茄钟区 -->
+      <div class="tool-section" id="pomodoro-section">
+        <div class="tool-section-head">
+          <span class="tool-section-title">🍅 番茄钟</span>
+          <button class="tool-open-btn" id="pomodoro-open-btn" type="button">打开窗口</button>
+        </div>
+        <div class="pomodoro-status" id="pomodoro-status">未运行</div>
+        <div class="pomodoro-settings">
+          <label class="pomodoro-field"><span>专注</span><input id="pomodoro-work-input" type="number" min="1" max="180" step="1" /><span>分</span></label>
+          <label class="pomodoro-field"><span>休息</span><input id="pomodoro-break-input" type="number" min="1" max="60" step="1" /><span>分</span></label>
+          <label class="pomodoro-field"><span>循环</span><input id="pomodoro-cycles-input" type="number" min="1" max="12" step="1" /><span>次</span></label>
+        </div>
+        <button class="toolbar-btn" id="pomodoro-start-btn" type="button">开始专注</button>
+      </div>
+
+      <!-- 系统区：备份 / 恢复 / 自启动 / 大字模式 -->
+      <div class="tool-section" id="system-section">
+        <div class="tool-section-head">
+          <span class="tool-section-title">⚙ 系统</span>
+        </div>
+        <div class="system-tools">
+          <button class="toolbar-btn" id="backup-btn" type="button">备份数据</button>
+          <button class="toolbar-btn" id="restore-btn" type="button">恢复备份</button>
+          <button class="toolbar-btn" id="bigtext-btn" type="button">大字模式</button>
+          <label class="switch-row">
+            <input id="auto-launch-check" type="checkbox" />
+            <span>开机自启动</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 底部工具栏 -->
+      <div class="footer-toolbar">
+        <button class="toolbar-btn" id="edit-settings-btn" type="button">⚙ 修改设置</button>
+        <button class="toolbar-btn" id="reset-history-btn" type="button">↺ 重置</button>
       </div>
     </div>
   </div>
 
-  <!-- 设置 / 引导界面（未配置时显示，占满窗口） -->
-  <section class="setup-view hidden" id="setup-view" data-page-node-id="XPL02H2yGq8LQeMDr5nAdx">
-    <div class="setup-drag" data-page-node-id="tbBSvvkoa9Lzf8tEnkfBPX">
-      <span class="panel-title" data-page-node-id="SsxRGrvUSMlPMABBnKcgIR">倒数日</span>
+  <!-- 目标 新建 / 编辑 界面（未配置或点击修改设置时显示） -->
+  <section class="setup-view hidden" id="setup-view">
+    <div class="setup-drag">
+      <span class="panel-title">倒数日</span>
     </div>
-    <h1 class="setup-title" data-page-node-id="F8dMRR61iu9iADPwHK6xAv">开始你的倒计时</h1>
+    <h1 class="setup-title" id="setup-title">新建目标</h1>
 
-    <label class="field" data-page-node-id="m51utSGuECcqG7OAP1mZ1n">
-      <span class="field-label" data-page-node-id="I7dzt2rWgGhcubENKD0OVC">目标日期</span>
-      <input id="target-date-input" class="input" type="date"
-             autocomplete="off" data-page-node-id="hqWN9RABOL6bT9xVHnLiks" />
-      <span class="field-hint" id="target-date-hint" data-page-node-id="targetDateHint00000000000001"></span>
+    <label class="field">
+      <span class="field-label">目标名称</span>
+      <input id="target-name-input" class="input" type="text"
+             placeholder="如：考研倒计时" autocomplete="off" maxlength="20" />
     </label>
 
-    <label class="field" data-page-node-id="displayModeField00000000000001">
-      <span class="field-label" data-page-node-id="displayModeLabel00000000000001">剩余时间显示方式</span>
-      <select id="display-mode-select" class="input select" data-page-node-id="displayModeSelect00000000000001">
+    <label class="field">
+      <span class="field-label">计时方式</span>
+      <select id="count-mode-select" class="input select">
+        <option value="countdown">倒计时（倒数到目标日期）</option>
+        <option value="countup">正计时（记录已坚持天数）</option>
+      </select>
+    </label>
+
+    <label class="field" id="target-date-field">
+      <span class="field-label">目标日期</span>
+      <input id="target-date-input" class="input" type="date" autocomplete="off" />
+      <span class="field-hint" id="target-date-hint"></span>
+    </label>
+
+    <label class="field hidden" id="start-date-field">
+      <span class="field-label">起点日期（可留空，首次打卡自动回填）</span>
+      <input id="start-date-input" class="input" type="date" autocomplete="off" />
+      <span class="field-hint">留空则从第一次打卡当天开始计算</span>
+    </label>
+
+    <label class="field" id="display-mode-field">
+      <span class="field-label">剩余时间显示方式</span>
+      <select id="display-mode-select" class="input select">
         <option value="days">仅天数（如 100 天）</option>
         <option value="months">月 + 天（如 3 个月 10 天）</option>
         <option value="years">年 + 月 + 天（如 1 年 2 个月 5 天）</option>
       </select>
     </label>
 
-    <label class="field" data-page-node-id="themeField00000000000001">
-      <span class="field-label" data-page-node-id="themeLabel00000000000001">主题</span>
-      <select id="theme-select" class="input select" data-page-node-id="themeSelect00000000000001">
+    <label class="field">
+      <span class="field-label">主题</span>
+      <select id="theme-select" class="input select">
         <option value="light">浅色 · 暖红</option>
         <option value="dark">深色 · 冷青</option>
       </select>
     </label>
 
-    <button id="save-settings-btn" class="btn btn-primary" data-page-node-id="tsF9bx8oOw9ehHg1GDScfw">保存</button>
-    <button id="cancel-edit-btn" class="btn btn-ghost hidden" data-page-node-id="C4hvHJV0IEVfkND5l8C3VY">取消</button>
+    <button id="save-settings-btn" class="btn btn-primary">保存</button>
+    <button id="cancel-edit-btn" class="btn btn-ghost hidden">取消</button>
 
-    <p id="setup-error" class="error-text" data-page-node-id="oPXjg8dtW0PGBwBdsUFNj0"></p>
+    <p id="setup-error" class="error-text"></p>
   </section>
 
-  <!-- 类目文案编辑浮层（点击类目 chip 的 ✎ 打开，编辑含义 / 按钮文字） -->
-  <section class="category-edit-view hidden" id="category-edit-view" data-page-node-id="categoryEditView00000000001">
-    <div class="setup-drag" data-page-node-id="categoryEditDrag00000000001">
-      <span class="panel-title" id="category-edit-title" data-page-node-id="categoryEditTitle0000000001">编辑类目文案</span>
+  <!-- 类目文案编辑浮层 -->
+  <section class="category-edit-view hidden" id="category-edit-view">
+    <div class="setup-drag">
+      <span class="panel-title" id="category-edit-title">编辑类目文案</span>
     </div>
 
-    <label class="field" data-page-node-id="catMsgField0000000000000001">
-      <span class="field-label" data-page-node-id="catMsgLabel0000000000000001">含义</span>
+    <label class="field">
+      <span class="field-label">含义</span>
       <input id="category-message-input" class="input" type="text"
-             placeholder="距离完成还有 X 天" autocomplete="off" data-page-node-id="catMsgInput0000000000000001" />
+             placeholder="距离完成还有 X 天" autocomplete="off" />
     </label>
 
-    <label class="field" data-page-node-id="catActiveField0000000000000001">
-      <span class="field-label" data-page-node-id="catActiveLabel0000000000000001">按钮文字（未消除时）</span>
+    <label class="field">
+      <span class="field-label">按钮文字（未打卡时）</span>
       <input id="category-active-text-input" class="input" type="text"
-             placeholder="打卡·运动（默认）" autocomplete="off" maxlength="20" data-page-node-id="catActiveInput0000000000000001" />
+             placeholder="打卡·运动（默认）" autocomplete="off" maxlength="20" />
     </label>
 
-    <label class="field" data-page-node-id="catDoneField00000000000000001">
-      <span class="field-label" data-page-node-id="catDoneLabel00000000000000001">按钮文字（已消除后）</span>
+    <label class="field">
+      <span class="field-label">按钮文字（已打卡后）</span>
       <input id="category-done-text-input" class="input" type="text"
-             placeholder="已打卡（默认）" autocomplete="off" maxlength="20" data-page-node-id="catDoneInput00000000000000001" />
+             placeholder="已打卡（默认）" autocomplete="off" maxlength="20" />
     </label>
 
-    <button id="save-category-texts-btn" class="btn btn-primary" data-page-node-id="saveCatTextsBtn0000000000001">保存</button>
-    <button id="cancel-category-texts-btn" class="btn btn-ghost" data-page-node-id="cancelCatTextsBtn0000000000001">取消</button>
+    <button id="save-category-texts-btn" class="btn btn-primary">保存</button>
+    <button id="cancel-category-texts-btn" class="btn btn-ghost">取消</button>
   </section>
 
   <!-- 新建闹钟浮层 -->
-  <section class="alarm-edit-view hidden" id="alarm-edit-view" data-page-node-id="alarmEditView000000000001">
-    <div class="setup-drag" data-page-node-id="alarmEditDrag00000000001">
-      <span class="panel-title" data-page-node-id="alarmEditTitle0000000001">新建闹钟</span>
+  <section class="alarm-edit-view hidden" id="alarm-edit-view">
+    <div class="setup-drag">
+      <span class="panel-title">新建闹钟</span>
     </div>
 
-    <div class="alarm-type-tabs" data-page-node-id="alarmTypeTabs00000000001">
-      <button class="alarm-type-tab active" id="alarm-tab-countdown" type="button" data-page-node-id="alarmTabCountdown000000001">倒计时</button>
-      <button class="alarm-type-tab" id="alarm-tab-fixed" type="button" data-page-node-id="alarmTabFixed0000000001">定点</button>
+    <div class="alarm-type-tabs">
+      <button class="alarm-type-tab active" id="alarm-tab-countdown" type="button">倒计时</button>
+      <button class="alarm-type-tab" id="alarm-tab-fixed" type="button">定点</button>
     </div>
 
-    <label class="field" data-page-node-id="alarmLabelField00000000001">
-      <span class="field-label" data-page-node-id="alarmLabelLabel0000000001">名称（说明用途）</span>
+    <label class="field">
+      <span class="field-label">名称（说明用途）</span>
       <input id="alarm-label-input" class="input" type="text"
-             placeholder="如：起来活动一下 / 喝水" autocomplete="off" maxlength="20" data-page-node-id="alarmLabelInput00000000001" />
+             placeholder="如：起来活动一下 / 喝水" autocomplete="off" maxlength="20" />
     </label>
 
-    <!-- 倒计时时长 -->
-    <label class="field" id="alarm-countdown-field" data-page-node-id="alarmCountdownField000000001">
-      <span class="field-label" data-page-node-id="alarmCountdownLabel00000001">倒计时时长（分钟）</span>
+    <label class="field" id="alarm-countdown-field">
+      <span class="field-label">倒计时时长（分钟）</span>
       <input id="alarm-duration-input" class="input" type="number" min="1" max="720"
-             placeholder="如：25" autocomplete="off" data-page-node-id="alarmDurationInput00000001" />
+             placeholder="如：25" autocomplete="off" />
     </label>
 
-    <!-- 定点时刻 -->
-    <label class="field hidden" id="alarm-fixed-field" data-page-node-id="alarmFixedField0000000001">
-      <span class="field-label" data-page-node-id="alarmFixedLabel0000000001">提醒时刻</span>
-      <input id="alarm-time-input" class="input" type="time" data-page-node-id="alarmTimeInput0000000001" />
+    <label class="field hidden" id="alarm-fixed-field">
+      <span class="field-label">提醒时刻</span>
+      <input id="alarm-time-input" class="input" type="time" />
     </label>
 
-    <label class="field" data-page-node-id="alarmRepeatField00000000001">
-      <span class="field-label" data-page-node-id="alarmRepeatLabel0000000001">重复</span>
-      <select id="alarm-repeat-select" class="input select" data-page-node-id="alarmRepeatSelect00000000001">
+    <label class="field">
+      <span class="field-label">重复</span>
+      <select id="alarm-repeat-select" class="input select">
         <option value="once">仅一次</option>
         <option value="daily">每天</option>
       </select>
     </label>
 
-    <button id="save-alarm-btn" class="btn btn-primary" data-page-node-id="saveAlarmBtn0000000000001">保存</button>
-    <button id="cancel-alarm-btn" class="btn btn-ghost" data-page-node-id="cancelAlarmBtn0000000000001">取消</button>
-    <p id="alarm-error" class="error-text" data-page-node-id="alarmError00000000000001"></p>
+    <button id="save-alarm-btn" class="btn btn-primary">保存</button>
+    <button id="cancel-alarm-btn" class="btn btn-ghost">取消</button>
+    <p id="alarm-error" class="error-text"></p>
   </section>
 
   <script src="renderer.js"></script>

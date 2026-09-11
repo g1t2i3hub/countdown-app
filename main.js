@@ -1,17 +1,19 @@
 'use strict';
 
 /**
- * 倒计时桌面应用 —— Electron 主进程
+ * 倒数日桌面应用 —— Electron 主进程（v3 多目标版本）
  *
  * 职责：
  *  - 创建应用窗口（contextIsolation: true, nodeIntegration: false）
  *  - 管理数据文件的读写（存放在 app.getPath('userData') 目录）
  *  - 通过 IPC 暴露安全的增删改查接口给渲染进程
+ *  - 番茄钟内存运行态 + 大字模式 / 番茄钟子窗口
  */
 
-const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, Menu, Tray, nativeImage, dialog, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { migrateV2toV3, computeStreakFromHistory } = require('./migrate');
 
 /**
  * 窗口固定尺寸（含悬浮条 + 下拉面板区域）。
@@ -20,10 +22,12 @@ const fs = require('fs');
  */
 const BAR_HEIGHT = 60;          // 悬浮条高度
 const WINDOW_SIZE = { width: 300, height: 640 };
-const CALENDAR_SIZE = { width: 360, height: 440 }; // 日历回看弹窗尺寸
+const CALENDAR_SIZE = { width: 380, height: 640 }; // 日历回看弹窗尺寸（v3 增加统计区）
+const POMODORO_SIZE = { width: 300, height: 300 }; // 番茄钟子窗口尺寸
+const BIGTEXT_SIZE = { width: 340, height: 220 };  // 大字模式子窗口尺寸
 
-/** 数据版本号：任何不等于 2 的存量数据启动时会被清空重建 */
-const SCHEMA_VERSION = 2;
+/** 数据版本号：任何不等于 3 的存量数据按版本迁移或重建 */
+const SCHEMA_VERSION = 3;
 
 /** 类目调色板（珊瑚红系 8 色，新增类目时循环分配） */
 const CATEGORY_COLORS = ['#ff6b5e', '#ffa26b', '#f5a623', '#4caf7d', '#5b8def', '#8f6bf0', '#e056a0', '#4fb3bf'];
@@ -32,36 +36,44 @@ const CATEGORY_COLORS = ['#ff6b5e', '#ffa26b', '#f5a623', '#4caf7d', '#5b8def', 
 const MAX_CATEGORIES = 10;
 const MAX_CATEGORY_NAME_LENGTH = 12;
 
-/** 应用数据的默认结构 */
+/** 应用数据的默认结构（v3：多目标 + 顶层全局字段） */
 const DEFAULT_STATE = {
   schemaVersion: SCHEMA_VERSION, // 数据版本号
-  totalDays: 0,   // 用户设置的总天数
-  targetDate: '', // 目标日期（YYYY-MM-DD），设置页通过日历选中；为空时由 totalDays 反推
-  message: '',    // 自定义含义文字（兼容旧数据；新数据以类目级 message 为准）
-  history: [],    // 天级打卡记录：[{ id, date, time, timestamp }]，每天最多一条，倒计时递减依据
-  categories: [], // 打卡类目：[{ id, name, color, createdAt, message, btnActiveText, btnDoneText }]
-  currentCategoryId: '', // 当前选中类目 id
-  checkinsByDate: {},    // 类目级打卡记录：{ "YYYY-MM-DD": { catId: { time, timestamp } } }
-  todosByDate: {}, // 按日期分组的待办：{ "YYYY-MM-DD": [{ id, text, done, carried, categoryId }] }
-  btnActiveText: '',  // 按钮「未打卡」时文字（兼容旧数据；新数据以类目级为准）
-  btnDoneText: '',     // 按钮「已打卡」时文字（兼容旧数据；新数据以类目级为准）
-  displayMode: 'days', // 剩余时间显示方式：'days' | 'months' | 'years'
-  theme: 'light',      // 主题：'light'（浅色暖红）| 'dark'（深色冷青，对应官网展示）
-  alarms: []           // 闹钟列表：[{ id, type: 'countdown'|'fixed', label, repeat: 'once'|'daily', endsAt, time, active }]
+  currentTargetId: '',           // 当前选中目标 id
+  theme: 'light',                // 主题：'light'（浅色暖红）| 'dark'（深色冷青）
+  targets: [],                   // 多目标数组（自包含），见 normalizeTarget
+  alarms: [],                    // 闹钟列表（顶层全局）
+  streak: { current: 0, longest: 0, lastCheckinDate: '' }, // 跨目标合并的连续打卡
+  pomodoro: { workMin: 25, breakMin: 5, cycles: 4 },       // 番茄钟设置
+  autoLaunch: false,             // 开机自启动
+  bigTextMode: false             // 大字模式开关
 };
 
 let mainWindow = null;
 let calendarWindow = null;
+let pomodoroWindow = null;
+let bigTextWindow = null;
 let dataFilePath = null;
 let tray = null;        // 系统托盘图标（常驻，避免被 GC 回收导致图标消失）
 let isQuitting = false; // 是否正在真正退出应用（用于区分「关闭窗口=隐藏」与「托盘退出」）
 let alarmTimer = null;  // 闹钟检查定时器
 let alarmWindow = null; // 闹钟提醒弹窗
+let pendingRestore = null; // 待恢复的备份内容（pick-restore-file 之后、apply-restore 之前）
 const alarmTriggeredIds = new Set(); // 已触发待确认的闹钟 id（避免重复弹窗）
+
+/** 番茄钟内存运行态（不持久化） */
+const pomodoroRuntime = {
+  active: false,
+  phase: 'work',        // 'work' | 'break'
+  endsAt: 0,            // 当前阶段结束时间戳
+  durationSeconds: 0,   // 当前阶段时长（秒）
+  cycleIndex: 0,        // 已完成的工作段数（0-based）
+  settings: { workMin: 25, breakMin: 5, cycles: 4 },
+  timer: null
+};
 
 /**
  * 返回今天的日期字符串（本地时区），格式：YYYY-MM-DD
- * 用于判断「今天」是否已经消除过。
  */
 function getTodayString() {
   const now = new Date();
@@ -113,18 +125,38 @@ function daysUntil(targetDateStr) {
 }
 
 /**
- * 生成带前缀的唯一 id：`<prefix>_<时间戳>_<随机串>`。
- * @param {string} prefix
- * @returns {string}
+ * 计算从起点日期到今天（含今天）已坚持的天数。
+ * 起点日期不能是未来；非法返回 0。
+ * @param {string} startDateStr 起点日期 YYYY-MM-DD
+ * @returns {number} 已坚持天数（起点当天算第 1 天）
  */
+function daysSince(startDateStr) {
+  if (!startDateStr) return 0;
+  const [sy, sm, sd] = String(startDateStr).split('-').map(Number);
+  if (!sy || !sm || !sd) return 0;
+  const start = new Date(sy, sm - 1, sd);
+  if (isNaN(start.getTime())) return 0;
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((today.getTime() - start.getTime()) / 86400000);
+  return diff >= 0 ? diff + 1 : 0;
+}
+
+/** 严格校验 YYYY-MM-DD 是否为真实日期 */
+function isValidDateStr(s) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s))) return false;
+  const [y, m, d] = String(s).split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+}
+
+/** 生成带前缀的唯一 id：`<prefix>_<时间戳>_<随机串>` */
 function generateId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/**
- * 生成默认类目「打卡」（颜色取调色板第一色）。
- * @returns {{id:string,name:string,color:string,createdAt:number}}
- */
+/** 生成默认类目「打卡」（颜色取调色板第一色） */
 function makeDefaultCategory() {
   return {
     id: generateId('cat'),
@@ -134,28 +166,53 @@ function makeDefaultCategory() {
   };
 }
 
+/** 生成默认目标（未配置，供首次启动 / 新建目标使用） */
+function makeDefaultTarget() {
+  const cat = makeDefaultCategory();
+  return {
+    id: generateId('tgt'),
+    name: '我的目标',
+    countMode: 'countdown',
+    targetDate: '',
+    startDate: '',
+    totalDays: 0,
+    displayMode: 'days',
+    createdAt: Date.now(),
+    history: [],
+    categories: [cat],
+    currentCategoryId: cat.id,
+    checkinsByDate: {},
+    todosByDate: {}
+  };
+}
+
 /**
- * 规范化状态：补齐缺失字段、保证「类目至少 1 个」、
- * 修正 currentCategoryId 指向、统一 schemaVersion。
- * @param {object} state
+ * 规范化单个目标：补齐缺失字段、保证类目至少 1 个、修正 currentCategoryId。
+ * @param {object} t
  * @returns {object}
  */
-function normalizeState(state) {
-  const s = { ...DEFAULT_STATE, ...(state && typeof state === 'object' ? state : {}) };
+function normalizeTarget(t) {
+  const target = {
+    id: String((t && t.id) || generateId('tgt')),
+    name: String((t && t.name) || '').trim() || '我的目标',
+    countMode: (t && t.countMode) === 'countup' ? 'countup' : 'countdown',
+    targetDate: String((t && t.targetDate) || ''),
+    startDate: String((t && t.startDate) || ''),
+    totalDays: Number(t && t.totalDays) || 0,
+    displayMode: ['days', 'months', 'years'].includes(t && t.displayMode) ? t.displayMode : 'days',
+    createdAt: Number(t && t.createdAt) || Date.now(),
+    history: Array.isArray(t && t.history) ? t.history : [],
+    categories: [],
+    currentCategoryId: String((t && t.currentCategoryId) || ''),
+    checkinsByDate: (t && t.checkinsByDate && typeof t.checkinsByDate === 'object' && !Array.isArray(t.checkinsByDate))
+      ? t.checkinsByDate
+      : {},
+    todosByDate: (t && t.todosByDate && typeof t.todosByDate === 'object' && !Array.isArray(t.todosByDate))
+      ? t.todosByDate
+      : {}
+  };
 
-  if (!Array.isArray(s.history)) s.history = [];
-  if (!Array.isArray(s.categories)) s.categories = [];
-  if (!s.checkinsByDate || typeof s.checkinsByDate !== 'object' || Array.isArray(s.checkinsByDate)) {
-    s.checkinsByDate = {};
-  }
-  if (!s.todosByDate || typeof s.todosByDate !== 'object' || Array.isArray(s.todosByDate)) {
-    s.todosByDate = {};
-  }
-  if (!Array.isArray(s.alarms)) s.alarms = [];
-  if (s.theme !== 'dark' && s.theme !== 'light') s.theme = 'light';
-
-  // 类目字段兜底（旧类目缺字段时补齐）
-  s.categories = s.categories.map((c) => ({
+  target.categories = (Array.isArray(t && t.categories) ? t.categories : []).map((c) => ({
     id: String((c && c.id) || ''),
     name: String((c && c.name) || '').trim() || '打卡',
     color: String((c && c.color) || CATEGORY_COLORS[0]),
@@ -165,15 +222,64 @@ function normalizeState(state) {
     btnDoneText: String((c && c.btnDoneText) || '')
   }));
 
-  // 类目至少 1 个：为空时自动补默认类目「打卡」
-  if (s.categories.length === 0) {
-    s.categories = [makeDefaultCategory()];
+  // 类目至少 1 个
+  if (target.categories.length === 0) {
+    target.categories = [makeDefaultCategory()];
   }
 
-  // currentCategoryId 必须是 categories 中存在的 id，否则回退到首个
-  const hasCurrent = s.categories.some((c) => c.id === s.currentCategoryId);
+  // currentCategoryId 必须指向存在的类目
+  const hasCurrent = target.categories.some((c) => c.id === target.currentCategoryId);
   if (!hasCurrent) {
-    s.currentCategoryId = s.categories[0].id;
+    target.currentCategoryId = target.categories[0].id;
+  }
+
+  return target;
+}
+
+/**
+ * 规范化状态：补齐顶层字段、规范化所有目标、修正 currentTargetId。
+ * @param {object} state
+ * @returns {object}
+ */
+function normalizeState(state) {
+  const s = { ...DEFAULT_STATE, ...(state && typeof state === 'object' ? state : {}) };
+
+  if (!Array.isArray(s.targets)) s.targets = [];
+  s.targets = s.targets.map(normalizeTarget);
+
+  if (!Array.isArray(s.alarms)) s.alarms = [];
+  if (s.theme !== 'dark' && s.theme !== 'light') s.theme = 'light';
+
+  if (!s.streak || typeof s.streak !== 'object' || Array.isArray(s.streak)) {
+    s.streak = { current: 0, longest: 0, lastCheckinDate: '' };
+  }
+  s.streak = {
+    current: Number(s.streak.current) || 0,
+    longest: Number(s.streak.longest) || 0,
+    lastCheckinDate: String(s.streak.lastCheckinDate || '')
+  };
+
+  if (!s.pomodoro || typeof s.pomodoro !== 'object' || Array.isArray(s.pomodoro)) {
+    s.pomodoro = { workMin: 25, breakMin: 5, cycles: 4 };
+  }
+  s.pomodoro = {
+    workMin: Number(s.pomodoro.workMin) || 25,
+    breakMin: Number(s.pomodoro.breakMin) || 5,
+    cycles: Number(s.pomodoro.cycles) || 4
+  };
+
+  s.autoLaunch = !!s.autoLaunch;
+  s.bigTextMode = !!s.bigTextMode;
+
+  // 目标至少 1 个
+  if (s.targets.length === 0) {
+    s.targets = [makeDefaultTarget()];
+  }
+
+  // currentTargetId 必须指向存在的目标
+  const hasCurrent = s.targets.some((t) => t.id === s.currentTargetId);
+  if (!hasCurrent) {
+    s.currentTargetId = s.targets[0].id;
   }
 
   s.schemaVersion = SCHEMA_VERSION;
@@ -182,7 +288,9 @@ function normalizeState(state) {
 
 /**
  * 从磁盘读取状态；文件不存在或损坏时回退到默认状态。
- * schemaVersion !== 2 的旧数据会被丢弃并重建为全新空状态。
+ * - v3：直接 normalize
+ * - v2：备份原始内容到 <userData>/countdown-data.v2.backup.json 后迁移
+ * - 其他：重建全新空状态
  * @returns {object} 规范化后的状态对象
  */
 function readState() {
@@ -190,11 +298,28 @@ function readState() {
     if (fs.existsSync(dataFilePath)) {
       const raw = fs.readFileSync(dataFilePath, 'utf-8');
       const parsed = JSON.parse(raw);
+
       if (parsed && typeof parsed === 'object' && parsed.schemaVersion === SCHEMA_VERSION) {
         return normalizeState(parsed);
       }
-      // 版本门禁：旧版数据直接丢弃，写回全新空状态
-      console.warn('[main] 检测到旧版本数据，已清空重建');
+
+      if (parsed && typeof parsed === 'object' && parsed.schemaVersion === 2) {
+        console.warn('[main] 检测到 v2 旧数据，正在迁移到 v3');
+        // 迁移前备份原始 v2 内容
+        const backupPath = path.join(app.getPath('userData'), 'countdown-data.v2.backup.json');
+        try {
+          fs.writeFileSync(backupPath, raw, 'utf-8');
+        } catch (backupErr) {
+          console.error('[main] 备份 v2 数据失败:', backupErr);
+        }
+        const migrated = migrateV2toV3(parsed);
+        const fresh = normalizeState(migrated);
+        writeState(fresh);
+        return fresh;
+      }
+
+      // 未知版本 / 非对象：直接丢弃并重建
+      console.warn('[main] 检测到未知版本数据，已清空重建');
       const fresh = normalizeState({ ...DEFAULT_STATE });
       writeState(fresh);
       return fresh;
@@ -220,24 +345,21 @@ function writeState(state) {
 }
 
 /**
- * 处理跨天逻辑：若今天还没有待办记录，则把昨天「未完成」的待办
- * 自动顺延到今天（标记 carried = true，表示是遗留待办）。
- * 返回是否需要写盘（true 表示发生了顺延/初始化）。
- * @param {object} state
+ * 处理单个目标跨天待办：若今天还没有记录，把昨天「未完成」的待办顺延到今天。
+ * 返回是否发生顺延（true 表示需要写盘）。
+ * @param {object} target
  * @returns {boolean}
  */
-function rolloverTodosIfNeeded(state) {
+function rolloverTargetTodos(target) {
   const today = getTodayString();
-  const byDate = (state.todosByDate && typeof state.todosByDate === 'object')
-    ? state.todosByDate
+  const byDate = (target.todosByDate && typeof target.todosByDate === 'object')
+    ? target.todosByDate
     : {};
 
-  // 今天已有记录（哪怕为空数组）→ 无需处理
   if (Array.isArray(byDate[today])) {
     return false;
   }
 
-  // 找到昨天未完成的待办，顺延到今天（保留 categoryId 归属）
   const yesterday = getYesterdayString();
   const yestTodos = Array.isArray(byDate[yesterday]) ? byDate[yesterday] : [];
   const carried = yestTodos
@@ -247,20 +369,28 @@ function rolloverTodosIfNeeded(state) {
       text: t.text,
       done: false,
       carried: true,
-      categoryId: t.categoryId || state.currentCategoryId || (state.categories[0] && state.categories[0].id) || ''
+      categoryId: t.categoryId || target.currentCategoryId || (target.categories[0] && target.categories[0].id) || ''
     }));
 
   byDate[today] = carried;
-  state.todosByDate = byDate;
+  target.todosByDate = byDate;
   return true;
 }
 
 /**
- * 把剩余天数格式化成用户选择的显示方式。
- * @param {number} remainingDays 剩余天数
- * @param {string} mode 显示方式：'days' | 'months' | 'years'
- * @returns {string} 例如 '100' / '3个月10天' / '1年2个月5天'
+ * 处理所有目标的跨天待办顺延。
+ * @param {object} state
+ * @returns {boolean} 是否发生顺延
  */
+function rolloverTodosIfNeeded(state) {
+  let changed = false;
+  state.targets.forEach((t) => {
+    if (rolloverTargetTodos(t)) changed = true;
+  });
+  return changed;
+}
+
+/** 把剩余天数格式化成用户选择的显示方式 */
 function formatRemaining(remainingDays, mode) {
   const days = Math.max(Number(remainingDays) || 0, 0);
 
@@ -278,7 +408,6 @@ function formatRemaining(remainingDays, mode) {
   if (mode === 'months') {
     const totalMonths = Math.floor(days / 30);
     const d = days % 30;
-    // 超过 12 个月时进位为「年」，避免出现「24个月」这类奇怪表达
     if (totalMonths >= 12) {
       const years = Math.floor(totalMonths / 12);
       const months = totalMonths % 12;
@@ -294,16 +423,10 @@ function formatRemaining(remainingDays, mode) {
     return parts.join('');
   }
 
-  // 默认：纯天数
   return String(days);
 }
 
-/**
- * 计算定点闹钟（HH:MM）下一次触发的时间戳。
- * 若今天的该时刻已过，则返回明天的同一时刻。
- * @param {string} time 格式 HH:MM
- * @returns {number} 时间戳（毫秒）；非法输入返回 0
- */
+/** 计算定点闹钟（HH:MM）下一次触发的时间戳 */
 function nextFixedTimestamp(time) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(time || ''));
   if (!m) return 0;
@@ -319,51 +442,55 @@ function nextFixedTimestamp(time) {
   return target.getTime();
 }
 
-/**
- * 由原始状态构建「视图模型」，把派生字段一次性计算好交给渲染进程。
- * @param {object} state
- * @returns {object}
- */
-function buildViewModel(state) {
-  const history = Array.isArray(state.history) ? state.history : [];
-  const totalDays = Number(state.totalDays) || 0;
-  const eliminatedCount = history.length;
-  const remainingDays = Math.max(totalDays - eliminatedCount, 0);
-  const today = getTodayString();
-  const eliminatedToday = history.some((h) => h.date === today);
-
-  const categories = Array.isArray(state.categories) ? state.categories : [];
-  const currentCategoryId = state.currentCategoryId || (categories[0] && categories[0].id) || '';
-  const currentCategory = categories.find((c) => c.id === currentCategoryId) || categories[0] || null;
-
-  const checkinsByDate = (state.checkinsByDate && typeof state.checkinsByDate === 'object')
-    ? state.checkinsByDate
-    : {};
-  const checkinsToday = checkinsByDate[today] || {};
-  const currentCategoryCheckedToday = !!(currentCategory && checkinsToday[currentCategory.id]);
-
-  const todosByDate = (state.todosByDate && typeof state.todosByDate === 'object')
-    ? state.todosByDate
-    : {};
-  const allTodayTodos = Array.isArray(todosByDate[today]) ? todosByDate[today] : [];
-  // 主面板只显示「当前选中类目」的今日待办
-  const todos = currentCategory
-    ? allTodayTodos.filter((t) => t.categoryId === currentCategory.id)
-    : [];
-
-  // 构建日历概况：每个有记录的日期 → { done, total }（全类目合计）
-  const todoDates = {};
-  Object.keys(todosByDate).forEach((date) => {
-    const list = todosByDate[date] || [];
-    todoDates[date] = {
-      done: list.filter((t) => t.done).length,
-      total: list.length
-    };
+/** 跨目标合并计算连续打卡（任一目标打卡即 +1，断签归零） */
+function recomputeStreak(targets) {
+  const merged = [];
+  (Array.isArray(targets) ? targets : []).forEach((t) => {
+    (Array.isArray(t.history) ? t.history : []).forEach((h) => merged.push(h));
   });
+  return computeStreakFromHistory(merged);
+}
 
-  // 闹钟：附加派生字段（倒计时剩余秒数 / 定点下次触发时间戳），供渲染进程实时显示
+/** 构建目标摘要（供目标选择条 / 悬浮条使用） */
+function buildTargetSummary(target) {
+  const isCountup = target.countMode === 'countup';
+  const history = Array.isArray(target.history) ? target.history : [];
+
+  let configured;
+  let remainingDays;
+  let remainingText;
+
+  if (isCountup) {
+    configured = true;
+    remainingDays = daysSince(target.startDate || '');
+    remainingText = String(remainingDays);
+  } else {
+    const totalDays = Number(target.totalDays) || 0;
+    configured = totalDays > 0 || !!target.targetDate;
+    remainingDays = Math.max(totalDays - history.length, 0);
+    remainingText = formatRemaining(remainingDays, target.displayMode);
+  }
+
+  return {
+    id: target.id,
+    name: target.name,
+    countMode: target.countMode,
+    isCountup,
+    targetDate: target.targetDate || '',
+    startDate: target.startDate || '',
+    totalDays: Number(target.totalDays) || 0,
+    displayMode: target.displayMode,
+    configured,
+    remainingDays,
+    remainingText,
+    eliminatedCount: history.length
+  };
+}
+
+/** 构建闹钟视图（附加派生字段） */
+function buildAlarms(alarms) {
   const now = Date.now();
-  const alarms = (Array.isArray(state.alarms) ? state.alarms : []).map((a) => {
+  return (Array.isArray(alarms) ? alarms : []).map((a) => {
     if (a.type === 'countdown') {
       return {
         ...a,
@@ -371,26 +498,246 @@ function buildViewModel(state) {
         remainingSeconds: Math.max(Math.ceil(((Number(a.endsAt) || 0) - now) / 1000), 0)
       };
     }
-    // 定点闹钟：计算今天该时刻的时间戳（可能已过）
     return {
       ...a,
       time: String(a.time || ''),
       nextAt: nextFixedTimestamp(String(a.time || ''))
     };
   });
+}
+
+/** 空统计汇总（无当前目标时） */
+function emptyStats() {
+  return { weekly: { labels: [], rates: [] }, monthly: { labels: [], rates: [] }, categoryDist: [] };
+}
+
+/** 计算某天的打卡率（已打卡类目数 / 类目总数，0..1） */
+function dayCheckinRate(dayMap, totalCats) {
+  if (!dayMap || typeof dayMap !== 'object' || totalCats <= 0) return 0;
+  const done = Object.keys(dayMap).length;
+  return Math.min(done / totalCats, 1);
+}
+
+/** 构建统计汇总（周/月打卡率 + 类目分布），供日历回看统计区 */
+function buildStatsSummary(target) {
+  if (!target) return emptyStats();
+
+  const categories = Array.isArray(target.categories) ? target.categories : [];
+  const checkinsByDate = (target.checkinsByDate && typeof target.checkinsByDate === 'object')
+    ? target.checkinsByDate
+    : {};
+  const now = new Date();
+
+  const toDateStr = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  };
+
+  // 本周一至周日
+  const dow = now.getDay(); // 0=周日
+  const mondayOffset = (dow + 6) % 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - mondayOffset);
+  const weeklyLabels = [];
+  const weeklyRates = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const dateStr = toDateStr(d);
+    weeklyLabels.push(dateStr);
+    weeklyRates.push(dayCheckinRate(checkinsByDate[dateStr], categories.length));
+  }
+
+  // 本月 1..N
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthlyLabels = [];
+  const monthlyRates = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = toDateStr(new Date(year, month, d));
+    monthlyLabels.push(dateStr);
+    monthlyRates.push(dayCheckinRate(checkinsByDate[dateStr], categories.length));
+  }
+
+  // 类目分布：各日期各类目打卡计数汇总
+  const catCounts = {};
+  categories.forEach((c) => { catCounts[c.id] = 0; });
+  Object.keys(checkinsByDate).forEach((date) => {
+    const dayMap = checkinsByDate[date] || {};
+    Object.keys(dayMap).forEach((cid) => {
+      if (catCounts[cid] !== undefined) catCounts[cid] += 1;
+    });
+  });
+  const categoryDist = categories.map((c) => ({
+    id: c.id,
+    name: c.name,
+    color: c.color,
+    count: catCounts[c.id] || 0
+  }));
 
   return {
-    configured: totalDays > 0,
-    totalDays,
-    targetDate: state.targetDate || '',
-    // 文案以「当前类目」为准；类目未设置时回退全局旧字段（兼容）
-    message: (currentCategory && currentCategory.message) || state.message || '',
-    btnActiveText: (currentCategory && currentCategory.btnActiveText) || state.btnActiveText || '',
-    btnDoneText: (currentCategory && currentCategory.btnDoneText) || state.btnDoneText || '',
-    displayMode: ['days', 'months', 'years'].includes(state.displayMode) ? state.displayMode : 'days',
+    weekly: { labels: weeklyLabels, rates: weeklyRates },
+    monthly: { labels: monthlyLabels, rates: monthlyRates },
+    categoryDist
+  };
+}
+
+/**
+ * 由原始状态构建「视图模型」，把派生字段一次性计算好交给渲染进程。
+ * 保留旧字段名（theme/countMode/isCountup/displayMode/targetDate/startDate/totalDays/
+ * remainingDays/remainingText/history/message/btnActiveText/btnDoneText/categories/
+ * currentCategoryId/currentCategory/checkinsByDate/checkinsToday/
+ * currentCategoryCheckedToday/todos/todosByDate/todoDates/configured/eliminatedCount/
+ * eliminatedToday/alarms），并新增 currentTarget/targets 摘要/floatTarget/streak/
+ * pomodoro/autoLaunch/bigTextMode/stats。
+ */
+function buildViewModel(state) {
+  const targets = Array.isArray(state.targets) ? state.targets : [];
+  const currentTargetId = state.currentTargetId || (targets[0] && targets[0].id) || '';
+  const currentTarget = targets.find((t) => t.id === currentTargetId) || targets[0] || null;
+  const today = getTodayString();
+
+  const targetSummaries = targets.map(buildTargetSummary);
+
+  // 悬浮条「最近到期目标」
+  let floatTarget = null;
+  if (targets.length > 0) {
+    let best = null;
+    let bestDate = '';
+    targets.forEach((t) => {
+      if (t.countMode !== 'countup' && t.targetDate && daysUntil(t.targetDate) > 0) {
+        if (!bestDate || t.targetDate < bestDate) {
+          bestDate = t.targetDate;
+          best = t;
+        }
+      }
+    });
+    if (!best) {
+      best = currentTarget || targets[0];
+    }
+    floatTarget = buildTargetSummary(best);
+  }
+
+  // 顶层字段
+  const base = {
     theme: state.theme === 'dark' ? 'dark' : 'light',
+    alarms: buildAlarms(state.alarms),
+    streak: state.streak || { current: 0, longest: 0, lastCheckinDate: '' },
+    pomodoro: state.pomodoro || { workMin: 25, breakMin: 5, cycles: 4 },
+    autoLaunch: !!state.autoLaunch,
+    bigTextMode: !!state.bigTextMode,
+    currentTargetId,
+    targets: targetSummaries,
+    floatTarget,
+    currentTarget: targetSummaries.find((t) => t.id === currentTargetId) || targetSummaries[0] || null,
+    stats: buildStatsSummary(currentTarget)
+  };
+
+  if (!currentTarget) {
+    return {
+      ...base,
+      configured: false,
+      countMode: 'countdown',
+      isCountup: false,
+      displayMode: 'days',
+      targetDate: '',
+      startDate: '',
+      totalDays: 0,
+      remainingDays: 0,
+      remainingText: '0',
+      message: '距离完成还有 X 天',
+      btnActiveText: '',
+      btnDoneText: '',
+      eliminatedCount: 0,
+      eliminatedToday: false,
+      history: [],
+      categories: [],
+      currentCategoryId: '',
+      currentCategory: null,
+      checkinsByDate: {},
+      checkinsToday: {},
+      currentCategoryCheckedToday: false,
+      todos: [],
+      todosByDate: {},
+      todoDates: {}
+    };
+  }
+
+  // ---------- 当前目标派生字段 ----------
+  const isCountup = currentTarget.countMode === 'countup';
+  const history = Array.isArray(currentTarget.history) ? currentTarget.history : [];
+  const categories = Array.isArray(currentTarget.categories) ? currentTarget.categories : [];
+  const currentCategoryId = currentTarget.currentCategoryId || (categories[0] && categories[0].id) || '';
+  const currentCategory = categories.find((c) => c.id === currentCategoryId) || categories[0] || null;
+  const checkinsByDate = (currentTarget.checkinsByDate && typeof currentTarget.checkinsByDate === 'object')
+    ? currentTarget.checkinsByDate
+    : {};
+  const todosByDate = (currentTarget.todosByDate && typeof currentTarget.todosByDate === 'object')
+    ? currentTarget.todosByDate
+    : {};
+
+  const checkinsToday = checkinsByDate[today] || {};
+  const currentCategoryCheckedToday = !!(currentCategory && checkinsToday[currentCategory.id]);
+
+  const allTodayTodos = Array.isArray(todosByDate[today]) ? todosByDate[today] : [];
+  const todos = currentCategory
+    ? allTodayTodos.filter((t) => t.categoryId === currentCategory.id)
+    : [];
+
+  const todoDates = {};
+  Object.keys(todosByDate).forEach((date) => {
+    const list = todosByDate[date] || [];
+    todoDates[date] = { done: list.filter((t) => t.done).length, total: list.length };
+  });
+
+  const eliminatedCount = history.length;
+  const eliminatedToday = history.some((h) => h.date === today);
+
+  let configured;
+  let displayMode;
+  let remainingDays;
+  let remainingText;
+  let message;
+
+  if (isCountup) {
+    configured = true;
+    displayMode = 'days';
+    remainingDays = daysSince(currentTarget.startDate || '');
+    remainingText = String(remainingDays);
+    const defaultMessage = '已坚持 X 天';
+    message = (currentCategory && currentCategory.message && currentCategory.message.trim())
+      ? currentCategory.message
+      : defaultMessage;
+  } else {
+    displayMode = ['days', 'months', 'years'].includes(currentTarget.displayMode)
+      ? currentTarget.displayMode
+      : 'days';
+    configured = (Number(currentTarget.totalDays) || 0) > 0 || !!currentTarget.targetDate;
+    remainingDays = Math.max((Number(currentTarget.totalDays) || 0) - eliminatedCount, 0);
+    remainingText = formatRemaining(remainingDays, displayMode);
+    const defaultMessage = '距离完成还有 X 天';
+    message = (currentCategory && currentCategory.message && currentCategory.message.trim())
+      ? currentCategory.message
+      : defaultMessage;
+  }
+
+  return {
+    ...base,
+    configured,
+    countMode: currentTarget.countMode,
+    isCountup,
+    displayMode,
+    targetDate: currentTarget.targetDate || '',
+    startDate: currentTarget.startDate || '',
+    totalDays: Number(currentTarget.totalDays) || 0,
     remainingDays,
-    remainingText: formatRemaining(remainingDays, state.displayMode),
+    remainingText,
+    message,
+    btnActiveText: (currentCategory && currentCategory.btnActiveText) || '',
+    btnDoneText: (currentCategory && currentCategory.btnDoneText) || '',
     eliminatedCount,
     eliminatedToday,
     history,
@@ -402,8 +749,7 @@ function buildViewModel(state) {
     currentCategoryCheckedToday,
     todos,
     todosByDate,
-    todoDates,
-    alarms
+    todoDates
   };
 }
 
@@ -447,8 +793,6 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
   // 拦截关闭：除非真正退出，否则「关闭」只是隐藏到后台，应用驻留。
-  // 只有托盘「退出」或右键系统菜单「退出」先把 isQuitting 置 true 后，
-  // 这里才会放行，让窗口真正关闭。
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
@@ -466,7 +810,6 @@ function createWindow() {
 
 /**
  * 将窗口定位到屏幕右上角（保留边距）。
- * @param {{width:number,height:number}} size
  */
 function positionWindow(size) {
   if (!mainWindow) return;
@@ -480,36 +823,22 @@ function positionWindow(size) {
 
 /**
  * 展开/收起下拉面板：动态调整窗口高度。
- * 收起态窗口只有悬浮条高度（BAR_HEIGHT），下方无透明区域，不挡底层应用；
- * 展开态窗口增高到完整高度，顶部位置（x/y）保持不变，向下延伸。
- * @param {boolean} expanded
  */
 function setPanelExpanded(expanded) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const [x, y] = mainWindow.getPosition();
   const targetHeight = expanded ? WINDOW_SIZE.height : BAR_HEIGHT;
-  // 尺寸未变化时不重复 setBounds（避免无谓的窗口几何重建导致输入框失焦）
   const currentBounds = mainWindow.getBounds();
   if (currentBounds.height === targetHeight && currentBounds.width === WINDOW_SIZE.width) {
     return;
   }
-  mainWindow.setBounds({
-    x,
-    y,
-    width: WINDOW_SIZE.width,
-    height: targetHeight
-  });
-  // Windows 上 setBounds 可能让透明置顶窗口短暂失焦，这里主动恢复，
-  // 保证展开面板后输入框能立即获得焦点、不出现「无法输入」的偶发失灵。
+  mainWindow.setBounds({ x, y, width: WINDOW_SIZE.width, height: targetHeight });
   if (expanded && mainWindow.isVisible()) {
     mainWindow.focus();
   }
 }
 
-/**
- * 将日历回看弹窗定位到主窗口左侧（与主窗口顶部对齐）；
- * 若左侧空间不足，则回退到工作区左上角。
- */
+/** 将日历回看弹窗定位到主窗口左侧 */
 function positionCalendarWindow() {
   if (!calendarWindow || calendarWindow.isDestroyed()) return;
   const display = screen.getPrimaryDisplay();
@@ -531,6 +860,12 @@ function positionCalendarWindow() {
   if (nx < x + margin) {
     nx = x + margin;
   }
+  if (ny < y + margin) {
+    ny = y + margin;
+  }
+  if (ny + CALENDAR_SIZE.height > y + height) {
+    ny = y + height - CALENDAR_SIZE.height - margin;
+  }
 
   calendarWindow.setBounds({
     x: Math.round(nx),
@@ -540,10 +875,7 @@ function positionCalendarWindow() {
   });
 }
 
-/**
- * 打开（或聚焦）日历回看弹窗。
- * 弹窗定位在主窗口左侧（若空间不足则定位到左上角）。
- */
+/** 打开（或聚焦）日历回看弹窗 */
 function openCalendarWindow() {
   if (calendarWindow && !calendarWindow.isDestroyed()) {
     positionCalendarWindow();
@@ -565,7 +897,7 @@ function openCalendarWindow() {
     hasShadow: false,
     alwaysOnTop: true,
     resizable: false,
-    skipTaskbar: true,      // 日历弹窗同样不显示在任务栏
+    skipTaskbar: true,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -589,7 +921,6 @@ function openCalendarWindow() {
     query: { theme: readState().theme || 'light' }
   });
 
-  // 就绪前先定位，避免弹窗先出现在默认位置
   positionCalendarWindow();
 
   calendarWindow.on('closed', () => {
@@ -598,9 +929,7 @@ function openCalendarWindow() {
 }
 
 /**
- * 打开闹钟提醒弹窗：居中显示「闹钟提醒」+ 标签 + 确认按钮。
- * 弹窗复用无边框透明窗口，点击「知道了」关闭。
- * @param {object} alarm 触发的闹钟
+ * 打开闹钟提醒弹窗。
  */
 function openAlarmWindow(alarm) {
   if (alarmWindow && !alarmWindow.isDestroyed()) {
@@ -636,7 +965,6 @@ function openAlarmWindow(alarm) {
   });
 
   alarmWindow.once('ready-to-show', () => {
-    // 居中显示
     const display = screen.getPrimaryDisplay();
     const { x, y, width, height } = display.workArea;
     const [wx, wy] = [320, 200];
@@ -653,9 +981,6 @@ function openAlarmWindow(alarm) {
   });
 }
 
-/**
- * 关闭闹钟提醒弹窗。
- */
 function closeAlarmWindow() {
   if (alarmWindow && !alarmWindow.isDestroyed()) {
     alarmWindow.close();
@@ -664,9 +989,6 @@ function closeAlarmWindow() {
 
 /**
  * 每秒检查闹钟是否到期。
- * - 倒计时闹钟：endsAt <= now 时触发
- * - 定点闹钟：当前时刻匹配 time 时触发（每天重复或单次）
- * 触发后：弹提醒窗 + 通知渲染进程闪烁悬浮条；单次闹钟自动停用。
  */
 function checkAlarms() {
   const state = readState();
@@ -690,27 +1012,22 @@ function checkAlarms() {
 
     if (shouldTrigger && !alarmTriggeredIds.has(a.id)) {
       triggeredAny = true;
-      // 弹窗 + 悬浮条闪烁
       openAlarmWindow(a);
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('alarm-triggered', { id: a.id, label: a.label });
       }
       alarmTriggeredIds.add(a.id);
 
-      // 单次闹钟触发后停用
       if (a.repeat === 'once') {
         changed = true;
         return { ...a, active: false };
       }
     }
 
-    // 定点每天重复：触发后本分钟内不再重复（通过 alarmTriggeredIds 去重，跨分钟自动清除）
     return a;
   });
 
-  // 清理已过期分钟的触发标记（定点闹钟跨分钟后可再次触发）
   if (newAlarms.length > 0 && alarmTriggeredIds.size > 0) {
-    // 定点闹钟：只保留"当前分钟仍在触发状态"的标记；倒计时闹钟：一直保留直到用户处理
     const toRemove = [];
     alarmTriggeredIds.forEach((id) => {
       const al = newAlarms.find((x) => x.id === id);
@@ -727,34 +1044,24 @@ function checkAlarms() {
   }
 
   if (triggeredAny) {
-    // 通知渲染进程刷新闹钟列表（单次闹钟已停用）
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('alarms-updated', buildViewModel({ ...state, alarms: newAlarms }));
     }
   }
 }
 
-/**
- * 启动闹钟检查定时器（每秒一次）。
- */
 function startAlarmTimer() {
   if (alarmTimer) return;
   alarmTimer = setInterval(checkAlarms, 1000);
 }
 
-/**
- * 加载托盘图标：优先使用专为托盘生成的 16×16 小图标（build/tray-icon.png），
- * 若缺失则回退到原始 icon.png 并在运行时缩放到 16×16。
- * @returns {Electron.NativeImage|null} 托盘图标，加载失败返回 null
- */
+/** 加载托盘图标 */
 function createTrayIcon() {
   const trayIconPath = path.join(__dirname, 'build', 'tray-icon.png');
   const image = nativeImage.createFromPath(trayIconPath);
   if (!image.isEmpty()) {
     return image;
   }
-
-  // 回退：直接用原图运行时缩放（Windows 托盘需要小尺寸图标）
   const fallback = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png'));
   if (fallback.isEmpty()) {
     return null;
@@ -762,10 +1069,6 @@ function createTrayIcon() {
   return fallback.resize({ width: 16, height: 16 });
 }
 
-/**
- * 显示（恢复）主窗口并聚焦。
- * 窗口可能因「关闭」被隐藏，或已被销毁（理论上不会），此处做兜底重建。
- */
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
@@ -778,9 +1081,6 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
-/**
- * 切换主窗口显示/隐藏（供托盘「显示/隐藏」菜单使用）。
- */
 function toggleMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
@@ -794,9 +1094,7 @@ function toggleMainWindow() {
 }
 
 /**
- * 创建系统托盘图标：单击恢复窗口，右键弹出「显示/隐藏 / 退出」菜单。
- * 不调用 setContextMenu，改用 right-click + popUpContextMenu，
- * 这样 Windows 上单击（click）依然可靠触发，避免「设置菜单后单击失效」的问题。
+ * 创建系统托盘图标。
  */
 function createTray() {
   if (tray) return;
@@ -814,6 +1112,23 @@ function createTray() {
     {
       label: '显示/隐藏',
       click: () => toggleMainWindow()
+    },
+    {
+      label: '番茄钟',
+      click: () => openPomodoroWindow()
+    },
+    {
+      label: '大字模式',
+      click: () => toggleBigText()
+    },
+    {
+      label: '备份数据',
+      click: () => {
+        backupDataToFile().then((res) => {
+          if (res.ok) notify('倒数日', '备份成功');
+          else if (res.error && res.error !== '已取消') notify('倒数日', res.error);
+        });
+      }
     },
     { type: 'separator' },
     {
@@ -834,9 +1149,302 @@ function createTray() {
   });
 }
 
+// ---------- 番茄钟 ----------
+
+function getPomodoroStatus() {
+  const runtime = pomodoroRuntime;
+  const settings = runtime.settings || { workMin: 25, breakMin: 5, cycles: 4 };
+
+  if (!runtime.active) {
+    return {
+      active: false,
+      phase: 'work',
+      remainingSeconds: settings.workMin * 60,
+      totalSeconds: settings.workMin * 60,
+      cycleIndex: 0,
+      cycles: settings.cycles,
+      settings
+    };
+  }
+
+  const remainingSeconds = Math.max(Math.ceil((runtime.endsAt - Date.now()) / 1000), 0);
+  return {
+    active: true,
+    phase: runtime.phase,
+    remainingSeconds,
+    totalSeconds: runtime.durationSeconds,
+    cycleIndex: runtime.cycleIndex,
+    cycles: settings.cycles,
+    settings
+  };
+}
+
+function broadcastPomodoroTick() {
+  const status = getPomodoroStatus();
+  if (pomodoroWindow && !pomodoroWindow.isDestroyed()) {
+    pomodoroWindow.webContents.send('pomodoro-tick', status);
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('pomodoro-tick', status);
+  }
+}
+
+function notify(title, body) {
+  try {
+    if (Notification.isSupported()) {
+      new Notification({ title: String(title || '倒数日'), body: String(body || ''), silent: false }).show();
+    }
+  } catch (err) {
+    console.error('[main] 系统通知失败:', err);
+  }
+}
+
+function notifyPomodoro(body) {
+  notify('番茄钟', body);
+  broadcastPomodoroTick();
+}
+
+function advancePomodoroPhase() {
+  const runtime = pomodoroRuntime;
+
+  if (runtime.phase === 'work') {
+    runtime.cycleIndex += 1;
+    if (runtime.cycleIndex >= runtime.settings.cycles) {
+      // 全部循环完成
+      stopPomodoro(false);
+      notify('番茄钟', '番茄钟全部完成！🎉');
+      broadcastPomodoroTick();
+      return;
+    }
+    runtime.phase = 'break';
+    runtime.durationSeconds = runtime.settings.breakMin * 60;
+    notifyPomodoro('工作段结束，休息一下！');
+  } else {
+    runtime.phase = 'work';
+    runtime.durationSeconds = runtime.settings.workMin * 60;
+    notifyPomodoro('休息结束，开始专注！');
+  }
+
+  runtime.endsAt = Date.now() + runtime.durationSeconds * 1000;
+  broadcastPomodoroTick();
+}
+
+function pomodoroTick() {
+  const runtime = pomodoroRuntime;
+  if (!runtime.active) return;
+  const remaining = Math.ceil((runtime.endsAt - Date.now()) / 1000);
+  if (remaining <= 0) {
+    advancePomodoroPhase();
+    return;
+  }
+  broadcastPomodoroTick();
+}
+
+function startPomodoro(settings) {
+  const runtime = pomodoroRuntime;
+  if (runtime.active) return; // 已在运行，忽略
+
+  const s = {
+    workMin: clampInt(settings && settings.workMin, 1, 180, runtime.settings.workMin),
+    breakMin: clampInt(settings && settings.breakMin, 1, 60, runtime.settings.breakMin),
+    cycles: clampInt(settings && settings.cycles, 1, 12, runtime.settings.cycles)
+  };
+  runtime.settings = s;
+  runtime.phase = 'work';
+  runtime.cycleIndex = 0;
+  runtime.durationSeconds = s.workMin * 60;
+  runtime.endsAt = Date.now() + runtime.durationSeconds * 1000;
+  runtime.active = true;
+
+  if (runtime.timer) {
+    clearInterval(runtime.timer);
+  }
+  runtime.timer = setInterval(pomodoroTick, 1000);
+
+  openPomodoroWindow();
+  broadcastPomodoroTick();
+}
+
+function stopPomodoro(notifyUser) {
+  const runtime = pomodoroRuntime;
+  runtime.active = false;
+  if (runtime.timer) {
+    clearInterval(runtime.timer);
+    runtime.timer = null;
+  }
+  runtime.phase = 'work';
+  runtime.endsAt = 0;
+  runtime.cycleIndex = 0;
+  if (notifyUser !== false) {
+    broadcastPomodoroTick();
+  }
+}
+
+/** 整数夹取：非法值回退默认值 */
+function clampInt(v, min, max, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(Math.round(n), min), max);
+}
+
+/** 打开（或聚焦）番茄钟子窗口 */
+function openPomodoroWindow() {
+  if (pomodoroWindow && !pomodoroWindow.isDestroyed()) {
+    pomodoroWindow.show();
+    pomodoroWindow.focus();
+    return;
+  }
+
+  pomodoroWindow = new BrowserWindow({
+    width: POMODORO_SIZE.width,
+    height: POMODORO_SIZE.height,
+    title: '番茄钟',
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  pomodoroWindow.setMenuBarVisibility(false);
+  if (process.platform === 'win32') {
+    pomodoroWindow.setAlwaysOnTop(true, 'screen-saver');
+  }
+
+  pomodoroWindow.loadFile(path.join(__dirname, 'pomodoro.html'), {
+    query: { theme: readState().theme || 'light' }
+  });
+
+  pomodoroWindow.once('ready-to-show', () => {
+    centerWindow(pomodoroWindow, POMODORO_SIZE.width, POMODORO_SIZE.height);
+    pomodoroWindow.show();
+    pomodoroWindow.focus();
+    broadcastPomodoroTick();
+  });
+
+  pomodoroWindow.on('closed', () => {
+    pomodoroWindow = null;
+  });
+}
+
+// ---------- 大字模式 ----------
+
+/** 打开（或聚焦）大字模式子窗口 */
+function openBigTextWindow() {
+  if (bigTextWindow && !bigTextWindow.isDestroyed()) {
+    bigTextWindow.show();
+    bigTextWindow.focus();
+    return;
+  }
+
+  bigTextWindow = new BrowserWindow({
+    width: BIGTEXT_SIZE.width,
+    height: BIGTEXT_SIZE.height,
+    title: '大字模式',
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  bigTextWindow.setMenuBarVisibility(false);
+  if (process.platform === 'win32') {
+    bigTextWindow.setAlwaysOnTop(true, 'screen-saver');
+  }
+
+  bigTextWindow.loadFile(path.join(__dirname, 'bigtext.html'), {
+    query: { theme: readState().theme || 'light' }
+  });
+
+  bigTextWindow.once('ready-to-show', () => {
+    centerWindow(bigTextWindow, BIGTEXT_SIZE.width, BIGTEXT_SIZE.height);
+    bigTextWindow.show();
+  });
+
+  bigTextWindow.on('closed', () => {
+    bigTextWindow = null;
+  });
+}
+
+/** 根据 bigTextMode 同步大字窗口开关 */
+function syncBigTextWindow(enabled) {
+  if (enabled) {
+    openBigTextWindow();
+  } else if (bigTextWindow && !bigTextWindow.isDestroyed()) {
+    bigTextWindow.close();
+  }
+}
+
+/** 切换大字模式（托盘菜单复用） */
+function toggleBigText() {
+  const state = readState();
+  const value = !state.bigTextMode;
+  const newState = { ...state, bigTextMode: value };
+  writeState(newState);
+  syncBigTextWindow(value);
+  return { ok: true, view: buildViewModel(newState) };
+}
+
+/** 窗口居中 */
+function centerWindow(win, width, height) {
+  if (!win || win.isDestroyed()) return;
+  const display = screen.getPrimaryDisplay();
+  const { x, y, width: sw, height: sh } = display.workArea;
+  win.setBounds({
+    x: Math.round(x + (sw - width) / 2),
+    y: Math.round(y + (sh - height) / 2),
+    width,
+    height
+  });
+}
+
+// ---------- 备份 / 恢复 ----------
+
+/**
+ * 弹出保存对话框并写出备份文件。
+ * @returns {Promise<{ok:boolean,path?:string,error?:string}>}
+ */
+async function backupDataToFile() {
+  const state = readState();
+  const defaultName = `countdown-backup-${getTodayString()}.json`;
+  const result = await dialog.showSaveDialog({
+    title: '备份数据',
+    defaultPath: path.join(app.getPath('documents'), defaultName),
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+
+  if (result.canceled || !result.filePath) {
+    return { ok: false, error: '已取消' };
+  }
+
+  try {
+    fs.writeFileSync(result.filePath, JSON.stringify(state, null, 2), 'utf-8');
+    return { ok: true, path: result.filePath };
+  } catch (err) {
+    return { ok: false, error: '备份失败：' + (err && err.message ? err.message : err) };
+  }
+}
+
 /** 注册所有 IPC 处理器 */
 function registerIpcHandlers() {
-  // 读取完整状态（同时处理待办跨天清空）
+  // 读取完整状态（同时处理待办跨天顺延）
   ipcMain.handle('get-state', () => {
     const state = readState();
     if (rolloverTodosIfNeeded(state)) {
@@ -845,48 +1453,7 @@ function registerIpcHandlers() {
     return buildViewModel(state);
   });
 
-  // 保存设置：设置新倒计时会重置打卡/待办，但保留类目（视为开启一段新的倒计时）。
-  // 含义/按钮文字已改为「类目级」，故这里不再接收/保存这三个字段。
-  ipcMain.handle('save-settings', (_event, settings) => {
-    const existing = readState();
-    const targetDate = String(settings && settings.targetDate ? settings.targetDate : '').trim();
-
-    // 优先用目标日期计算天数（保证与日历选中一致）；否则回退用传入的 totalDays
-    let totalDays;
-    if (targetDate) {
-      totalDays = daysUntil(targetDate);
-      if (totalDays <= 0) {
-        return { ok: false, error: '目标日期必须是未来的日期' };
-      }
-    } else {
-      totalDays = Number(settings && settings.totalDays);
-      if (!Number.isInteger(totalDays) || totalDays <= 0) {
-        return { ok: false, error: '请选择目标日期' };
-      }
-    }
-
-    const displayMode = ['days', 'months', 'years'].includes(settings && settings.displayMode)
-      ? settings.displayMode
-      : 'days';
-    const theme = (settings && settings.theme === 'dark') ? 'dark' : 'light';
-    const state = {
-      ...DEFAULT_STATE,
-      totalDays,
-      targetDate,
-      displayMode,
-      theme,
-      // 保留类目（含类目级含义/按钮文案）与当前类目；重置打卡与待办
-      categories: existing.categories,
-      currentCategoryId: existing.currentCategoryId,
-      history: [],
-      checkinsByDate: {},
-      todosByDate: {}
-    };
-    writeState(state);
-    return { ok: true, view: buildViewModel(state) };
-  });
-
-  // 切换主题：仅更新主题字段，不影响倒计时/打卡/待办数据
+  // 切换主题：仅更新主题字段
   ipcMain.handle('set-theme', (_event, theme) => {
     const state = readState();
     state.theme = (theme === 'dark') ? 'dark' : 'light';
@@ -894,34 +1461,175 @@ function registerIpcHandlers() {
     return { ok: true, view: buildViewModel(state) };
   });
 
-  // 对指定类目打卡（替代原 eliminate-today）：每类目每天一次；
-  // 当天「第一次」任一类目打卡时才写入一条 history，保证剩余天数每天只减 1。
-  ipcMain.handle('eliminate-category', (_event, categoryId) => {
+  // ================= 目标 CRUD =================
+
+  // 新建目标。payload: { name?, countMode?, targetDate?, startDate?, totalDays?, displayMode? }
+  ipcMain.handle('create-target', (_event, payload) => {
+    const state = readState();
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const name = String(p.name || '').trim() || '新目标';
+    const countMode = p.countMode === 'countup' ? 'countup' : 'countdown';
+
+    const target = makeDefaultTarget();
+    target.name = name;
+    target.countMode = countMode;
+
+    if (countMode === 'countup') {
+      const startDate = String(p.startDate || '').trim();
+      if (startDate && !isValidDateStr(startDate)) {
+        return { ok: false, error: '起点日期格式不正确', view: buildViewModel(state) };
+      }
+      if (startDate && daysUntil(startDate) > 0) {
+        return { ok: false, error: '起点日期不能是未来', view: buildViewModel(state) };
+      }
+      target.startDate = startDate;
+      target.totalDays = 0;
+      target.targetDate = '';
+    } else {
+      const targetDate = String(p.targetDate || '').trim();
+      if (targetDate) {
+        const d = daysUntil(targetDate);
+        if (d <= 0) {
+          return { ok: false, error: '目标日期必须是未来的日期', view: buildViewModel(state) };
+        }
+        target.totalDays = d;
+        target.targetDate = targetDate;
+      } else {
+        target.totalDays = Number(p.totalDays) || 0;
+      }
+      target.displayMode = ['days', 'months', 'years'].includes(p.displayMode) ? p.displayMode : 'days';
+    }
+
+    const newState = { ...state, targets: [...state.targets, target], currentTargetId: target.id };
+    writeState(newState);
+    return { ok: true, target, view: buildViewModel(newState) };
+  });
+
+  // 更新目标。payload: { name?, countMode?, targetDate?, startDate?, totalDays?, displayMode? }
+  ipcMain.handle('update-target', (_event, id, payload) => {
+    const state = readState();
+    const tid = String(id || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
+
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const name = String(p.name || '').trim() || target.name;
+    const countMode = p.countMode === 'countup' ? 'countup' : 'countdown';
+
+    let totalDays = Number(target.totalDays) || 0;
+    let targetDate = target.targetDate || '';
+    let startDate = target.startDate || '';
+    let displayMode = target.displayMode || 'days';
+
+    if (countMode === 'countup') {
+      startDate = String(p.startDate || '').trim();
+      if (startDate && !isValidDateStr(startDate)) {
+        return { ok: false, error: '起点日期格式不正确', view: buildViewModel(state) };
+      }
+      if (startDate && daysUntil(startDate) > 0) {
+        return { ok: false, error: '起点日期不能是未来', view: buildViewModel(state) };
+      }
+      targetDate = '';
+      totalDays = 0;
+    } else {
+      startDate = '';
+      targetDate = String(p.targetDate || '').trim();
+      displayMode = ['days', 'months', 'years'].includes(p.displayMode) ? p.displayMode : 'days';
+      if (targetDate) {
+        const d = daysUntil(targetDate);
+        if (d <= 0) {
+          return { ok: false, error: '目标日期必须是未来的日期', view: buildViewModel(state) };
+        }
+        totalDays = d;
+      } else {
+        totalDays = Number(p.totalDays) || 0;
+      }
+    }
+
+    const newTarget = { ...target, name, countMode, targetDate, startDate, totalDays, displayMode };
+    const newState = { ...state, targets: state.targets.map((t) => (t.id === tid ? newTarget : t)) };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // 删除目标（至少保留一个）
+  ipcMain.handle('delete-target', (_event, id) => {
+    const state = readState();
+    const tid = String(id || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
+    if (state.targets.length <= 1) {
+      return { ok: false, error: '至少保留一个目标', view: buildViewModel(state) };
+    }
+
+    const targets = state.targets.filter((t) => t.id !== tid);
+    let currentTargetId = state.currentTargetId;
+    if (currentTargetId === tid) {
+      currentTargetId = targets[0].id;
+    }
+    const newState = { ...state, targets, currentTargetId };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // 切换当前目标
+  ipcMain.handle('set-current-target', (_event, id) => {
+    const state = readState();
+    const tid = String(id || '');
+    if (!state.targets.some((t) => t.id === tid)) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
+    const newState = { ...state, currentTargetId: tid };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // ================= 打卡（作用于指定目标） =================
+
+  // 对指定目标的指定类目打卡：每类目每天一次；当天第一次打卡才写 history；
+  // countup 目标首次打卡自动回填起点日期；打卡后重算跨目标 Streak。
+  ipcMain.handle('checkin-category', (_event, targetId, categoryId) => {
     const state = readState();
     if (rolloverTodosIfNeeded(state)) {
       writeState(state);
     }
 
-    const totalDays = Number(state.totalDays) || 0;
-    const cid = String(categoryId || '');
-    const cat = state.categories.find((c) => c.id === cid);
-
-    if (totalDays <= 0) {
-      return { ok: false, error: '请先设置倒计时', view: buildViewModel(state) };
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
     }
+
+    const cid = String(categoryId || '');
+    const cat = target.categories.find((c) => c.id === cid);
     if (!cat) {
       return { ok: false, error: '类目不存在', view: buildViewModel(state) };
     }
 
     const today = getTodayString();
-    const checkinsByDate = state.checkinsByDate || {};
+    const checkinsByDate = target.checkinsByDate || {};
     const todayCheckins = checkinsByDate[today] || {};
 
     if (todayCheckins[cid]) {
       return { ok: false, error: '该分类今天已打卡', view: buildViewModel(state) };
     }
-    if (state.history.length >= totalDays) {
-      return { ok: false, error: '倒计时已全部完成 🎉', view: buildViewModel(state) };
+
+    // countdown：上限校验
+    if (target.countMode !== 'countup') {
+      const totalDays = Number(target.totalDays) || 0;
+      if (totalDays <= 0) {
+        return { ok: false, error: '请先设置倒计时', view: buildViewModel(state) };
+      }
+      if (target.history.length >= totalDays) {
+        return { ok: false, error: '倒计时已全部完成 🎉', view: buildViewModel(state) };
+      }
+    } else if (!target.startDate) {
+      // countup：首次打卡自动回填起点日期
+      target.startDate = today;
     }
 
     const entry = {
@@ -931,56 +1639,72 @@ function registerIpcHandlers() {
       timestamp: Date.now()
     };
 
-    // 写入类目级打卡
     todayCheckins[cid] = { time: entry.time, timestamp: entry.timestamp };
     checkinsByDate[today] = todayCheckins;
 
-    // 当天第一次打卡才写天级 history（倒计时递减依据，每天只减 1）
-    const history = Array.isArray(state.history) ? state.history : [];
-    const isFirstToday = !history.some((h) => h.date === today);
-    const newHistory = isFirstToday ? [entry, ...history] : history;
+    const isFirstToday = !target.history.some((h) => h.date === today);
+    const newHistory = isFirstToday ? [entry, ...target.history] : target.history;
 
-    const newState = { ...state, history: newHistory, checkinsByDate };
+    const newTarget = {
+      ...target,
+      startDate: target.startDate,
+      history: newHistory,
+      checkinsByDate
+    };
+    const targets = state.targets.map((t) => (t.id === tid ? newTarget : t));
+    const streak = recomputeStreak(targets);
+    const newState = { ...state, targets, streak };
     writeState(newState);
     return { ok: true, entry, view: buildViewModel(newState) };
   });
 
-  // 新建类目（自动分配颜色；名称非空且 ≤ 12 字；类目数量 ≤ 10）
-  ipcMain.handle('create-category', (_event, name) => {
-    const state = readState();
-    const trimmed = String(name || '').trim();
+  // ================= 类目（作用于指定目标） =================
 
+  ipcMain.handle('create-category', (_event, targetId, name) => {
+    const state = readState();
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
+
+    const trimmed = String(name || '').trim();
     if (!trimmed) {
       return { ok: false, error: '类目名称不能为空', view: buildViewModel(state) };
     }
     if (trimmed.length > MAX_CATEGORY_NAME_LENGTH) {
       return { ok: false, error: `类目名称不能超过 ${MAX_CATEGORY_NAME_LENGTH} 个字`, view: buildViewModel(state) };
     }
-    if (state.categories.length >= MAX_CATEGORIES) {
+    if (target.categories.length >= MAX_CATEGORIES) {
       return { ok: false, error: `最多创建 ${MAX_CATEGORIES} 个类目`, view: buildViewModel(state) };
     }
 
     const category = {
       id: generateId('cat'),
       name: trimmed,
-      color: CATEGORY_COLORS[state.categories.length % CATEGORY_COLORS.length],
+      color: CATEGORY_COLORS[target.categories.length % CATEGORY_COLORS.length],
       createdAt: Date.now()
     };
-    const categories = [...state.categories, category];
-    // 理论空列表兜底：首个类目设为当前
-    const currentCategoryId = state.categories.length === 0 ? category.id : state.currentCategoryId;
-    const newState = { ...state, categories, currentCategoryId };
+    const categories = [...target.categories, category];
+    const currentCategoryId = target.categories.length === 0 ? category.id : target.currentCategoryId;
+
+    const newTarget = { ...target, categories, currentCategoryId };
+    const newState = { ...state, targets: state.targets.map((t) => (t.id === tid ? newTarget : t)) };
     writeState(newState);
     return { ok: true, category, view: buildViewModel(newState) };
   });
 
-  // 重命名类目
-  ipcMain.handle('rename-category', (_event, id, name) => {
+  ipcMain.handle('rename-category', (_event, targetId, id, name) => {
     const state = readState();
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
+
     const cid = String(id || '');
     const trimmed = String(name || '').trim();
-    const cat = state.categories.find((c) => c.id === cid);
-
+    const cat = target.categories.find((c) => c.id === cid);
     if (!cat) {
       return { ok: false, error: '类目不存在', view: buildViewModel(state) };
     }
@@ -991,73 +1715,83 @@ function registerIpcHandlers() {
       return { ok: false, error: `类目名称不能超过 ${MAX_CATEGORY_NAME_LENGTH} 个字`, view: buildViewModel(state) };
     }
 
-    const categories = state.categories.map((c) => (c.id === cid ? { ...c, name: trimmed } : c));
-    const newState = { ...state, categories };
+    const categories = target.categories.map((c) => (c.id === cid ? { ...c, name: trimmed } : c));
+    const newTarget = { ...target, categories };
+    const newState = { ...state, targets: state.targets.map((t) => (t.id === tid ? newTarget : t)) };
     writeState(newState);
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 删除类目：连同其打卡与待办一起清除；拒绝删除最后一个类目。
-  ipcMain.handle('delete-category', (_event, id) => {
+  ipcMain.handle('delete-category', (_event, targetId, id) => {
     const state = readState();
-    const cid = String(id || '');
-    const cat = state.categories.find((c) => c.id === cid);
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
 
+    const cid = String(id || '');
+    const cat = target.categories.find((c) => c.id === cid);
     if (!cat) {
       return { ok: false, error: '类目不存在', view: buildViewModel(state) };
     }
-    if (state.categories.length <= 1) {
+    if (target.categories.length <= 1) {
       return { ok: false, error: '至少保留一个类目', view: buildViewModel(state) };
     }
 
-    const categories = state.categories.filter((c) => c.id !== cid);
-    // 当前类目被删时回退到首个
-    let currentCategoryId = state.currentCategoryId;
+    const categories = target.categories.filter((c) => c.id !== cid);
+    let currentCategoryId = target.currentCategoryId;
     if (currentCategoryId === cid) {
       currentCategoryId = categories[0].id;
     }
 
-    // 清除该类目的打卡记录
     const checkinsByDate = {};
-    Object.keys(state.checkinsByDate || {}).forEach((date) => {
-      const dayMap = { ...(state.checkinsByDate[date] || {}) };
+    Object.keys(target.checkinsByDate || {}).forEach((date) => {
+      const dayMap = { ...(target.checkinsByDate[date] || {}) };
       delete dayMap[cid];
       if (Object.keys(dayMap).length > 0) checkinsByDate[date] = dayMap;
     });
 
-    // 清除该类目的待办
     const todosByDate = {};
-    Object.keys(state.todosByDate || {}).forEach((date) => {
-      const list = (state.todosByDate[date] || []).filter((t) => t.categoryId !== cid);
+    Object.keys(target.todosByDate || {}).forEach((date) => {
+      const list = (target.todosByDate[date] || []).filter((t) => t.categoryId !== cid);
       if (list.length > 0) todosByDate[date] = list;
     });
 
-    const newState = { ...state, categories, currentCategoryId, checkinsByDate, todosByDate };
+    const newTarget = { ...target, categories, currentCategoryId, checkinsByDate, todosByDate };
+    const newState = { ...state, targets: state.targets.map((t) => (t.id === tid ? newTarget : t)) };
     writeState(newState);
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 切换当前类目并持久化
-  ipcMain.handle('set-current-category', (_event, id) => {
+  ipcMain.handle('set-current-category', (_event, targetId, id) => {
     const state = readState();
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
     const cid = String(id || '');
-    const exists = state.categories.some((c) => c.id === cid);
-
-    if (!exists) {
+    if (!target.categories.some((c) => c.id === cid)) {
       return { ok: false, error: '类目不存在', view: buildViewModel(state) };
     }
 
-    const newState = { ...state, currentCategoryId: cid };
+    const newTarget = { ...target, currentCategoryId: cid };
+    const newState = { ...state, targets: state.targets.map((t) => (t.id === tid ? newTarget : t)) };
     writeState(newState);
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 更新指定类目的文案（含义 / 按钮未消除文字 / 按钮已消除文字）
-  ipcMain.handle('update-category-texts', (_event, id, texts) => {
+  ipcMain.handle('update-category-texts', (_event, targetId, id, texts) => {
     const state = readState();
-    const cid = String(id || '');
-    const cat = state.categories.find((c) => c.id === cid);
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
 
+    const cid = String(id || '');
+    const cat = target.categories.find((c) => c.id === cid);
     if (!cat) {
       return { ok: false, error: '类目不存在', view: buildViewModel(state) };
     }
@@ -1067,24 +1801,37 @@ function registerIpcHandlers() {
     const btnActiveText = String(patch.btnActiveText || '').trim();
     const btnDoneText = String(patch.btnDoneText || '').trim();
 
-    const categories = state.categories.map((c) =>
+    const categories = target.categories.map((c) =>
       c.id === cid ? { ...c, message, btnActiveText, btnDoneText } : c
     );
-    const newState = { ...state, categories };
+    const newTarget = { ...target, categories };
+    const newState = { ...state, targets: state.targets.map((t) => (t.id === tid ? newTarget : t)) };
     writeState(newState);
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 重置历史记录：清空 history + checkinsByDate（保留类目与待办）
-  ipcMain.handle('reset-history', () => {
+  // 重置指定目标的历史记录（清空 history + checkinsByDate；countup 同时清空起点）
+  ipcMain.handle('reset-history', (_event, targetId) => {
     const state = readState();
-    const newState = { ...state, history: [], checkinsByDate: {} };
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
+
+    const newTarget = { ...target, history: [], checkinsByDate: {} };
+    if (newTarget.countMode === 'countup') {
+      newTarget.startDate = '';
+    }
+    const targets = state.targets.map((t) => (t.id === tid ? newTarget : t));
+    const streak = recomputeStreak(targets);
+    const newState = { ...state, targets, streak };
     writeState(newState);
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 创建闹钟
-  // payload: { type: 'countdown'|'fixed', label, repeat: 'once'|'daily', durationSeconds, time }
+  // ================= 闹钟 =================
+
   ipcMain.handle('create-alarm', (_event, payload) => {
     const state = readState();
     const p = payload && typeof payload === 'object' ? payload : {};
@@ -1135,7 +1882,6 @@ function registerIpcHandlers() {
     return { ok: true, alarm, view: buildViewModel(newState) };
   });
 
-  // 删除闹钟
   ipcMain.handle('delete-alarm', (_event, id) => {
     const state = readState();
     const aid = String(id || '');
@@ -1146,7 +1892,6 @@ function registerIpcHandlers() {
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 暂停/恢复闹钟（切换 active）
   ipcMain.handle('toggle-alarm', (_event, id) => {
     const state = readState();
     const aid = String(id || '');
@@ -1158,7 +1903,6 @@ function registerIpcHandlers() {
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 确认闹钟提醒（关闭弹窗 + 清除触发标记）
   ipcMain.handle('dismiss-alarm', (_event, id) => {
     const aid = String(id || '');
     alarmTriggeredIds.delete(aid);
@@ -1166,8 +1910,9 @@ function registerIpcHandlers() {
     return { ok: true };
   });
 
-  // 新增待办（归属 categoryId；缺省回退当前类目 → 首个类目）
-  ipcMain.handle('add-todo', (_event, text, categoryId) => {
+  // ================= 待办（作用于指定目标） =================
+
+  ipcMain.handle('add-todo', (_event, targetId, text, categoryId) => {
     const content = String(text || '').trim();
     if (!content) {
       return { ok: false, error: '待办内容不能为空' };
@@ -1175,13 +1920,19 @@ function registerIpcHandlers() {
 
     const state = readState();
     rolloverTodosIfNeeded(state);
-    const today = getTodayString();
-    const byDate = state.todosByDate || {};
 
-    // 归属类目：入参 → 当前类目 → 首个类目
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
+
+    const today = getTodayString();
+    const byDate = target.todosByDate || {};
+
     let cid = String(categoryId || '');
-    if (!state.categories.some((c) => c.id === cid)) {
-      cid = state.currentCategoryId || state.categories[0].id;
+    if (!target.categories.some((c) => c.id === cid)) {
+      cid = target.currentCategoryId || target.categories[0].id;
     }
 
     const todo = {
@@ -1193,64 +1944,78 @@ function registerIpcHandlers() {
     };
 
     byDate[today] = [...(byDate[today] || []), todo];
-    const newState = { ...state, todosByDate: byDate };
+    const newTarget = { ...target, todosByDate: byDate };
+    const newState = { ...state, targets: state.targets.map((t) => (t.id === tid ? newTarget : t)) };
     writeState(newState);
     return { ok: true, todo, view: buildViewModel(newState) };
   });
 
-  // 切换待办完成状态（打勾 / 取消）
-  ipcMain.handle('toggle-todo', (_event, id) => {
+  ipcMain.handle('toggle-todo', (_event, targetId, id) => {
     const state = readState();
     rolloverTodosIfNeeded(state);
-    const today = getTodayString();
-    const byDate = state.todosByDate || {};
 
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
+
+    const today = getTodayString();
+    const byDate = target.todosByDate || {};
     byDate[today] = (byDate[today] || []).map((t) =>
       t.id === id ? { ...t, done: !t.done } : t
     );
 
-    const newState = { ...state, todosByDate: byDate };
+    const newTarget = { ...target, todosByDate: byDate };
+    const newState = { ...state, targets: state.targets.map((t) => (t.id === tid ? newTarget : t)) };
     writeState(newState);
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 删除待办（只删今天这份，不影响历史日期记录）
-  ipcMain.handle('delete-todo', (_event, id) => {
+  ipcMain.handle('delete-todo', (_event, targetId, id) => {
     const state = readState();
     rolloverTodosIfNeeded(state);
-    const today = getTodayString();
-    const byDate = state.todosByDate || {};
 
+    const tid = String(targetId || '');
+    const target = state.targets.find((t) => t.id === tid);
+    if (!target) {
+      return { ok: false, error: '目标不存在', view: buildViewModel(state) };
+    }
+
+    const today = getTodayString();
+    const byDate = target.todosByDate || {};
     byDate[today] = (byDate[today] || []).filter((t) => t.id !== id);
-    const newState = { ...state, todosByDate: byDate };
+
+    const newTarget = { ...target, todosByDate: byDate };
+    const newState = { ...state, targets: state.targets.map((t) => (t.id === tid ? newTarget : t)) };
     writeState(newState);
     return { ok: true, view: buildViewModel(newState) };
   });
 
-  // 查询指定日期的待办（供日历回看）
+  // 查询指定日期的待办（当前目标）
   ipcMain.handle('get-todos-by-date', (_event, dateStr) => {
     const state = readState();
     rolloverTodosIfNeeded(state);
-    const byDate = state.todosByDate || {};
+    const currentTarget = state.targets.find((t) => t.id === state.currentTargetId) || state.targets[0];
+    const byDate = (currentTarget && currentTarget.todosByDate) || {};
     const date = String(dateStr || '');
     const list = Array.isArray(byDate[date]) ? byDate[date] : [];
     return { ok: true, date, todos: list };
   });
 
-  // 获取日历回看所需的全局概况：所有有记录的日期的 done/total + 完整 todosByDate
+  // 获取日历回看概况（当前目标，含统计汇总 stats）
   ipcMain.handle('get-calendar-overview', () => {
     const state = readState();
     rolloverTodosIfNeeded(state);
     return buildViewModel(state);
   });
 
-  // 打开日历回看弹窗
+  // 打开 / 关闭日历回看弹窗
   ipcMain.handle('open-calendar', () => {
     openCalendarWindow();
     return { ok: true };
   });
 
-  // 关闭日历回看弹窗
   ipcMain.handle('close-calendar', () => {
     if (calendarWindow && !calendarWindow.isDestroyed()) {
       calendarWindow.close();
@@ -1258,9 +2023,135 @@ function registerIpcHandlers() {
     return { ok: true };
   });
 
-  // 拖动窗口（无边框窗口移动）：渲染进程传入增量位移 { dx, dy }
-  // 根据 event.sender 判断是主窗口还是日历弹窗发起的拖动。
-  // 用 ipcMain.on（对应 preload 的 send，单向），避免高频 invoke 往返造成拖动卡顿。
+  // ================= 备份 / 恢复 =================
+
+  ipcMain.handle('backup-data', async () => {
+    return backupDataToFile();
+  });
+
+  ipcMain.handle('pick-restore-file', async () => {
+    const result = await dialog.showOpenDialog({
+      title: '选择备份文件',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    });
+
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return { ok: false, error: '已取消' };
+    }
+
+    const filePath = result.filePaths[0];
+    try {
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        return { ok: false, error: '备份文件格式不正确' };
+      }
+      if (parsed.schemaVersion !== 2 && parsed.schemaVersion !== 3) {
+        return { ok: false, error: '不支持的备份版本' };
+      }
+      pendingRestore = { parsed, fileName: path.basename(filePath) };
+      return { ok: true, fileName: path.basename(filePath), schemaVersion: parsed.schemaVersion };
+    } catch (err) {
+      return { ok: false, error: '读取备份失败：' + (err && err.message ? err.message : err) };
+    }
+  });
+
+  ipcMain.handle('apply-restore', () => {
+    if (!pendingRestore) {
+      return { ok: false, error: '请先选择备份文件', view: buildViewModel(readState()) };
+    }
+    try {
+      let parsed = pendingRestore.parsed;
+      if (parsed.schemaVersion === 2) {
+        parsed = migrateV2toV3(parsed);
+      }
+      const fresh = normalizeState(parsed);
+      writeState(fresh);
+      pendingRestore = null;
+      return { ok: true, view: buildViewModel(fresh) };
+    } catch (err) {
+      return { ok: false, error: '恢复失败：' + (err && err.message ? err.message : err) };
+    }
+  });
+
+  // ================= 开机自启动 / 大字模式 =================
+
+  ipcMain.handle('set-auto-launch', (_event, enabled) => {
+    const state = readState();
+    const value = !!enabled;
+    try {
+      app.setLoginItemSettings({ openAtLogin: value });
+    } catch (err) {
+      return { ok: false, error: '设置开机自启动失败：' + (err && err.message ? err.message : err), view: buildViewModel(state) };
+    }
+    const newState = { ...state, autoLaunch: value };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  ipcMain.handle('set-big-text', (_event, enabled) => {
+    const state = readState();
+    const value = !!enabled;
+    const newState = { ...state, bigTextMode: value };
+    writeState(newState);
+    syncBigTextWindow(value);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  ipcMain.handle('toggle-big-text', () => {
+    return toggleBigText();
+  });
+
+  // ================= 番茄钟 =================
+
+  ipcMain.handle('open-pomodoro', () => {
+    openPomodoroWindow();
+    return { ok: true, status: getPomodoroStatus() };
+  });
+
+  ipcMain.handle('close-pomodoro', () => {
+    if (pomodoroWindow && !pomodoroWindow.isDestroyed()) {
+      pomodoroWindow.close();
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle('start-pomodoro', (_event, payload) => {
+    const p = payload && typeof payload === 'object' ? payload : {};
+    startPomodoro({
+      workMin: p.workMin,
+      breakMin: p.breakMin,
+      cycles: p.cycles
+    });
+    return { ok: true, status: getPomodoroStatus() };
+  });
+
+  ipcMain.handle('stop-pomodoro', () => {
+    stopPomodoro();
+    return { ok: true, status: getPomodoroStatus() };
+  });
+
+  ipcMain.handle('get-pomodoro-status', () => {
+    return getPomodoroStatus();
+  });
+
+  ipcMain.handle('update-pomodoro-settings', (_event, payload) => {
+    const state = readState();
+    const p = payload && typeof payload === 'object' ? payload : {};
+    const pomodoro = {
+      workMin: clampInt(p.workMin, 1, 180, state.pomodoro.workMin),
+      breakMin: clampInt(p.breakMin, 1, 60, state.pomodoro.breakMin),
+      cycles: clampInt(p.cycles, 1, 12, state.pomodoro.cycles)
+    };
+    pomodoroRuntime.settings = pomodoro;
+    const newState = { ...state, pomodoro };
+    writeState(newState);
+    return { ok: true, view: buildViewModel(newState) };
+  });
+
+  // ================= 窗口控制（单向 send） =================
+
   ipcMain.on('drag-window', (event, delta) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
@@ -1270,12 +2161,10 @@ function registerIpcHandlers() {
     win.setPosition(x + Math.round(dx), y + Math.round(dy));
   });
 
-  // 展开/收起主窗口下拉面板：动态调整窗口高度（收起时不挡底层应用）
   ipcMain.on('set-panel-open', (_event, open) => {
     setPanelExpanded(!!open);
   });
 
-  // 右键弹出系统菜单（最小化 / 关闭 / 退出）
   ipcMain.on('show-context-menu', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
@@ -1288,6 +2177,24 @@ function registerIpcHandlers() {
       {
         label: '关闭',
         click: () => win.close()
+      },
+      { type: 'separator' },
+      {
+        label: '番茄钟',
+        click: () => openPomodoroWindow()
+      },
+      {
+        label: '大字模式',
+        click: () => toggleBigText()
+      },
+      {
+        label: '备份数据',
+        click: () => {
+          backupDataToFile().then((res) => {
+            if (res.ok) notify('倒数日', '备份成功');
+            else if (res.error && res.error !== '已取消') notify('倒数日', res.error);
+          });
+        }
       },
       { type: 'separator' },
       {
@@ -1310,6 +2217,11 @@ app.whenReady().then(() => {
   createTray();
   startAlarmTimer(); // 启动闹钟检查
 
+  // 初始化番茄钟运行态设置 + 恢复大字模式窗口
+  const initialState = readState();
+  pomodoroRuntime.settings = { ...initialState.pomodoro };
+  syncBigTextWindow(initialState.bigTextMode);
+
   // macOS：点击 Dock 图标且无窗口时重新创建窗口
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -1319,7 +2231,6 @@ app.whenReady().then(() => {
 });
 
 // 所有窗口关闭时不退出：窗口「关闭」= 隐藏到后台，应用常驻，由系统托盘控制。
-// 只有托盘「退出」或右键系统菜单「退出」才真正退出整个应用。
 app.on('window-all-closed', () => {
   // 不退出应用，驻留后台
 });
@@ -1329,7 +2240,7 @@ app.on('before-quit', () => {
   isQuitting = true;
 });
 
-// 退出时销毁托盘，避免残留一个无响应/幽灵图标。
+// 退出时清理：托盘、闹钟定时器、番茄钟定时器、各类子窗口。
 app.on('will-quit', () => {
   if (tray) {
     tray.destroy();
@@ -1339,7 +2250,17 @@ app.on('will-quit', () => {
     clearInterval(alarmTimer);
     alarmTimer = null;
   }
+  if (pomodoroRuntime.timer) {
+    clearInterval(pomodoroRuntime.timer);
+    pomodoroRuntime.timer = null;
+  }
   if (alarmWindow && !alarmWindow.isDestroyed()) {
     alarmWindow.close();
+  }
+  if (pomodoroWindow && !pomodoroWindow.isDestroyed()) {
+    pomodoroWindow.close();
+  }
+  if (bigTextWindow && !bigTextWindow.isDestroyed()) {
+    bigTextWindow.close();
   }
 });

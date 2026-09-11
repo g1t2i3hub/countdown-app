@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * 倒数日 —— 渲染进程逻辑（悬浮条 + 点击展开下拉面板版）
+ * 倒数日 —— 渲染进程逻辑（v3 多目标版本）
  *
  * 窗口固定尺寸（透明），悬浮条常驻顶部，点击悬浮条切换下拉面板展开/收起。
- * JS 只负责：数据渲染 + 消除 + 历史折叠 + 设置 + 面板切换。
+ * JS 负责：数据渲染 + 打卡 + 目标/类目/待办/闹钟 + 番茄钟 + 备份 + 面板切换。
  */
 
 const $ = (selector) => document.querySelector(selector);
@@ -16,7 +16,13 @@ const floatUnitEl = $('#float-unit');
 const floatEliminateBtn = $('#float-eliminate-btn');
 const floatAlarmEl = $('#float-alarm');
 
+const targetChips = $('#target-chips');
+const targetAdd = $('#target-add');
+
 const messageText = $('#message-text');
+const streakBadge = $('#streak-badge');
+const streakCountEl = $('#streak-count');
+const streakLongestEl = $('#streak-longest');
 const remainingDaysEl = $('#remaining-days');
 const numberUnitEl = $('#number-unit');
 const eliminateBtn = $('#eliminate-btn');
@@ -35,8 +41,15 @@ const categoryAdd = $('#category-add');
 
 const setupView = $('#setup-view');
 const stage = $('#stage');
+const setupTitle = $('#setup-title');
+const targetNameInput = $('#target-name-input');
+const countModeSelect = $('#count-mode-select');
+const targetDateField = $('#target-date-field');
 const targetDateInput = $('#target-date-input');
 const targetDateHint = $('#target-date-hint');
+const startDateField = $('#start-date-field');
+const startDateInput = $('#start-date-input');
+const displayModeField = $('#display-mode-field');
 const displayModeSelect = $('#display-mode-select');
 const themeSelect = $('#theme-select');
 const saveSettingsBtn = $('#save-settings-btn');
@@ -70,17 +83,29 @@ const saveAlarmBtn = $('#save-alarm-btn');
 const cancelAlarmBtn = $('#cancel-alarm-btn');
 const alarmError = $('#alarm-error');
 
+// 番茄钟 / 系统区
+const pomodoroOpenBtn = $('#pomodoro-open-btn');
+const pomodoroStatusEl = $('#pomodoro-status');
+const pomodoroWorkInput = $('#pomodoro-work-input');
+const pomodoroBreakInput = $('#pomodoro-break-input');
+const pomodoroCyclesInput = $('#pomodoro-cycles-input');
+const pomodoroStartBtn = $('#pomodoro-start-btn');
+const backupBtn = $('#backup-btn');
+const restoreBtn = $('#restore-btn');
+const bigtextBtn = $('#bigtext-btn');
+const autoLaunchCheck = $('#auto-launch-check');
+
 // ---------- 状态 ----------
 let currentState = null;
 let isAnimating = false;
-let editing = false; // 是否处于「编辑设置」模式（避免 render 覆盖设置页）
-let panelOpen = false; // 下拉面板是否展开（点击切换，不再 hover）
-let didDrag = false;   // 标记是否刚发生过拖动（用于区分「点击」和「拖动」）
-let categoryInputActive = false; // 是否正在内联输入类目名（新增/重命名），避免重复开输入框
-let editingCategoryTexts = false; // 是否正在编辑类目文案（浮层打开中）
+let editing = false; // 是否处于「目标 新建/编辑」模式
+let panelOpen = false; // 下拉面板是否展开
+let didDrag = false;   // 标记是否刚发生过拖动
+let categoryInputActive = false; // 是否正在内联输入类目名
+let editingCategoryTexts = false; // 类目文案浮层打开中
 let editingCategoryId = '';       // 正在编辑文案的类目 id
-let alarmType = 'countdown';      // 当前新建闹钟的类型：countdown | fixed
-let alarmEditing = false;         // 是否正在新建闹钟（浮层打开中）
+let alarmType = 'countdown';      // 当前新建闹钟类型
+let alarmEditing = false;         // 是否正在新建闹钟
 
 // ---------- 工具函数 ----------
 
@@ -101,14 +126,14 @@ function toDateStr(date) {
   return `${y}-${m}-${d}`;
 }
 
-/** 从今天起算，往后加 N 天得到目标日期字符串（用于编辑回显反推） */
+/** 从今天起算，往后加 N 天得到目标日期字符串 */
 function addDaysToToday(n) {
   const dt = new Date();
   dt.setDate(dt.getDate() + n);
   return toDateStr(dt);
 }
 
-/** 计算今天到目标日期相差的天数（不含今天，未来为正，否则 0） */
+/** 计算今天到目标日期相差的天数（未来为正，否则 0） */
 function daysUntilLocal(targetDateStr) {
   if (!targetDateStr) return 0;
   const [ty, tm, td] = targetDateStr.split('-').map(Number);
@@ -121,12 +146,88 @@ function daysUntilLocal(targetDateStr) {
   return diff > 0 ? diff : 0;
 }
 
+/** 是否为未来日期 */
+function isFutureDate(dateStr) {
+  return daysUntilLocal(dateStr) > 0;
+}
+
 /** 将自定义文字中的占位符替换为剩余天数 */
 function renderMessage(raw, remaining) {
   return raw
     .replace(/\{remaining\}/g, String(remaining))
     .replace(/\{days\}/g, String(remaining))
     .replace(/\bX\b/g, String(remaining));
+}
+
+// ---------- 目标选择 ----------
+
+/** 渲染目标 chips（名称 + 摘要 + 删除；选中项高亮） */
+function renderTargets() {
+  const s = currentState;
+  targetChips.innerHTML = '';
+  const targets = (s && s.targets) || [];
+  const currentId = (s && s.currentTargetId) || (targets[0] && targets[0].id) || '';
+
+  targets.forEach((t) => {
+    const chip = document.createElement('div');
+    chip.className = 'target-chip' + (t.id === currentId ? ' active' : '');
+    chip.dataset.id = t.id;
+
+    const name = document.createElement('span');
+    name.className = 'target-name';
+    name.textContent = t.name;
+
+    const sub = document.createElement('span');
+    sub.className = 'target-sub';
+    sub.textContent = t.isCountup
+      ? `已坚持${t.remainingDays}天`
+      : (t.remainingText || '');
+
+    chip.appendChild(name);
+    chip.appendChild(sub);
+
+    // 至少保留一个目标：多于一个时才显示删除
+    if (targets.length > 1) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'target-del';
+      del.textContent = '×';
+      del.title = '删除目标';
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleDeleteTarget(t.id);
+      });
+      chip.appendChild(del);
+    }
+
+    chip.addEventListener('click', () => {
+      if (t.id !== currentId) {
+        handleSelectTarget(t.id);
+      }
+    });
+
+    // 双击编辑目标
+    chip.addEventListener('dblclick', async () => {
+      if (t.id !== currentId) {
+        await handleSelectTarget(t.id);
+      }
+      handleEditSettings();
+    });
+
+    targetChips.appendChild(chip);
+  });
+}
+
+/** 渲染连续打卡火焰角标 */
+function renderStreak() {
+  const streak = currentState ? currentState.streak : null;
+  if (streak && (streak.current > 0 || streak.longest > 0)) {
+    streakCountEl.textContent = String(streak.current);
+    streakLongestEl.textContent = String(streak.longest);
+    streakBadge.classList.remove('hidden');
+  } else {
+    streakBadge.classList.add('hidden');
+  }
 }
 
 // ---------- 类目选择 ----------
@@ -137,7 +238,7 @@ function truncateCategoryName(name) {
   return str.length > 4 ? `${str.slice(0, 4)}…` : str;
 }
 
-/** 渲染类目 chips（色点 + 名称 + hover 删除 ×）；选中项高亮；末位 ＋ 号由 index.html 提供 */
+/** 渲染类目 chips */
 function renderCategories() {
   const s = currentState;
   categoryChips.innerHTML = '';
@@ -167,7 +268,6 @@ function renderCategories() {
       handleDeleteCategory(cat.id);
     });
 
-    // 编辑文案按钮（✎）：打开类目文案编辑浮层
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'category-edit';
@@ -183,14 +283,12 @@ function renderCategories() {
     chip.appendChild(edit);
     chip.appendChild(del);
 
-    // 单击切换当前类目
     chip.addEventListener('click', () => {
       if (cat.id !== currentId) {
         handleSelectCategory(cat.id);
       }
     });
 
-    // 双击重命名
     chip.addEventListener('dblclick', () => {
       startRenameCategory(cat);
     });
@@ -296,12 +394,11 @@ function startRenameCategory(cat) {
   });
 }
 
-// ---------- 下拉面板展开/收起（点击切换） ----------
+// ---------- 下拉面板展开/收起 ----------
 
 function setPanelOpen(open) {
   panelOpen = open;
   stage.classList.toggle('open', open);
-  // 通知主进程调整窗口高度：收起时只保留悬浮条，不挡底层应用
   window.api.setPanelOpen(open);
 }
 
@@ -311,7 +408,7 @@ function togglePanel() {
 
 // ---------- 渲染 ----------
 
-/** 应用主题（浅色暖红 / 深色冷青） */
+/** 应用主题 */
 function applyTheme(theme) {
   document.body.classList.toggle('theme-dark', theme === 'dark');
   if (themeSelect) {
@@ -337,7 +434,6 @@ function renderTodos() {
     const li = document.createElement('li');
     li.className = 'todo-item' + (todo.done ? ' done' : '');
 
-    // 打勾方块
     const check = document.createElement('button');
     check.type = 'button';
     check.className = 'todo-check' + (todo.done ? ' checked' : '');
@@ -345,12 +441,10 @@ function renderTodos() {
     check.setAttribute('aria-label', '标记完成');
     check.addEventListener('click', () => handleToggleTodo(todo.id));
 
-    // 待办文字
     const text = document.createElement('span');
     text.className = 'todo-text';
     text.textContent = todo.text;
 
-    // 删除按钮
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'todo-delete';
@@ -361,7 +455,6 @@ function renderTodos() {
     li.appendChild(check);
     li.appendChild(text);
 
-    // 遗留标签
     if (todo.carried) {
       const badge = document.createElement('span');
       badge.className = 'todo-carried-badge';
@@ -374,9 +467,8 @@ function renderTodos() {
   });
 }
 
-// ---------- 日历回看（独立悬浮弹窗） ----------
+// ---------- 日历回看 ----------
 
-/** 点击「回看历史」→ 打开独立的日历弹窗窗口 */
 function handleToggleCalendar() {
   window.api.openCalendar();
 }
@@ -412,12 +504,10 @@ function renderAlarms() {
     const item = document.createElement('div');
     item.className = 'alarm-item' + (alarm.active ? '' : ' paused');
 
-    // 图标
     const icon = document.createElement('span');
     icon.className = 'alarm-item-icon';
     icon.textContent = alarm.type === 'countdown' ? '⏳' : '⏰';
 
-    // 信息
     const info = document.createElement('div');
     info.className = 'alarm-item-info';
     const label = document.createElement('div');
@@ -437,7 +527,6 @@ function renderAlarms() {
     info.appendChild(label);
     info.appendChild(meta);
 
-    // 暂停/恢复按钮
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'alarm-item-toggle';
@@ -445,7 +534,6 @@ function renderAlarms() {
     toggle.setAttribute('aria-label', alarm.active ? '暂停闹钟' : '恢复闹钟');
     toggle.addEventListener('click', () => handleToggleAlarm(alarm.id));
 
-    // 删除按钮
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'alarm-item-delete';
@@ -471,14 +559,13 @@ function openAlarmEditor() {
   alarmTimeInput.value = '';
   alarmRepeatSelect.value = 'once';
   switchAlarmType('countdown');
-  // 隐藏主面板、展开窗口（与类目文案浮层一致），否则浮层被挤出视口看不到
   stage.classList.add('hidden');
   setupView.classList.add('hidden');
   alarmEditView.classList.remove('hidden');
   window.api.setPanelOpen(true);
 }
 
-/** 切换闹钟类型（倒计时 / 定点） */
+/** 切换闹钟类型 */
 function switchAlarmType(type) {
   alarmType = type;
   alarmTabCountdown.classList.toggle('active', type === 'countdown');
@@ -487,16 +574,13 @@ function switchAlarmType(type) {
   alarmFixedField.classList.toggle('hidden', type !== 'fixed');
 }
 
-/** 关闭新建闹钟浮层，返回主面板 */
 function closeAlarmEditor() {
   alarmEditing = false;
   alarmEditView.classList.add('hidden');
   stage.classList.remove('hidden');
-  // 回到主面板，收起窗口（只保留悬浮条）
   window.api.setPanelOpen(false);
 }
 
-/** 保存闹钟 */
 async function handleSaveAlarm() {
   alarmError.textContent = '';
   const label = alarmLabelInput.value.trim();
@@ -529,7 +613,6 @@ async function handleSaveAlarm() {
   }
 }
 
-/** 删除闹钟 */
 async function handleDeleteAlarm(id) {
   const result = await window.api.deleteAlarm(id);
   if (result.ok) {
@@ -538,7 +621,6 @@ async function handleDeleteAlarm(id) {
   }
 }
 
-/** 暂停/恢复闹钟 */
 async function handleToggleAlarm(id) {
   const result = await window.api.toggleAlarm(id);
   if (result.ok) {
@@ -547,17 +629,11 @@ async function handleToggleAlarm(id) {
   }
 }
 
-/** 闹钟触发：仅关闭提醒弹窗，不再闪烁悬浮条（悬浮条常驻显示最近闹钟时间） */
 function handleAlarmTriggered() {
-  // 无操作：提醒弹窗由主进程独立弹出，悬浮条无需闪烁
+  // 提醒弹窗由主进程独立弹出，悬浮条无需闪烁
 }
 
-/**
- * 计算「最近即将触发的启用中闹钟」，返回其在悬浮条上的展示文本。
- * - 倒计时闹钟：返回剩余时长（如「25分」「1小时5分」）
- * - 定点闹钟：返回 HH:MM
- * 多个闹钟取触发时间最近的那个；无启用闹钟返回空字符串。
- */
+/** 计算「最近即将触发的启用中闹钟」展示文本 */
 function computeFloatAlarmText() {
   if (!currentState) return '';
   const alarms = (currentState.alarms || []).filter((a) => a.active);
@@ -589,7 +665,6 @@ function computeFloatAlarmText() {
   return String(nearest.time || '');
 }
 
-/** 计算定点闹钟（HH:MM）下一次触发的本地时间戳（渲染进程辅助，供悬浮条显示） */
 function nextFixedLocal(time) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(time || ''));
   if (!m) return 0;
@@ -604,22 +679,16 @@ function nextFixedLocal(time) {
   return target.getTime();
 }
 
-/** 把秒数格式化为精简文本（悬浮条用）：「25分」「1小时5分」 */
 function formatAlarmDurationShort(totalSeconds) {
   const s = Math.max(Number(totalSeconds) || 0, 0);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  if (h > 0) {
-    return `${h}小时${m}分`;
-  }
-  if (m > 0) {
-    return `${m}分`;
-  }
+  if (h > 0) return `${h}小时${m}分`;
+  if (m > 0) return `${m}分`;
   return `${sec}秒`;
 }
 
-/** 更新悬浮条上的闹钟时间显示（有启用闹钟时显示，否则隐藏） */
 function renderFloatAlarm() {
   if (!floatAlarmEl) return;
   const text = computeFloatAlarmText();
@@ -631,25 +700,81 @@ function renderFloatAlarm() {
   }
 }
 
+/** 渲染悬浮条（显示「最近到期目标」，仅作展示） */
+function renderFloatBar() {
+  const ft = currentState ? currentState.floatTarget : null;
+
+  if (!ft) {
+    floatDaysEl.textContent = '--';
+    floatDaysEl.classList.remove('is-text');
+    floatUnitEl.textContent = '天';
+    floatUnitEl.classList.remove('hidden');
+    return;
+  }
+
+  const mode = ft.isCountup ? 'days' : ft.displayMode;
+  if (mode === 'days') {
+    floatDaysEl.textContent = String(ft.remainingDays);
+    floatDaysEl.classList.remove('is-text');
+    floatUnitEl.textContent = '天';
+    floatUnitEl.classList.remove('hidden');
+  } else {
+    floatDaysEl.textContent = ft.remainingText || '';
+    floatDaysEl.classList.add('is-text');
+    floatUnitEl.textContent = '';
+    floatUnitEl.classList.add('hidden');
+  }
+}
+
+/** 渲染番茄钟设置回显（仅在输入框未聚焦时） */
+function renderPomodoroSettings() {
+  const p = currentState ? currentState.pomodoro : null;
+  if (!p) return;
+  if (document.activeElement !== pomodoroWorkInput) pomodoroWorkInput.value = p.workMin;
+  if (document.activeElement !== pomodoroBreakInput) pomodoroBreakInput.value = p.breakMin;
+  if (document.activeElement !== pomodoroCyclesInput) pomodoroCyclesInput.value = p.cycles;
+}
+
+/** 渲染番茄钟运行状态文本 */
+function renderPomodoroStatus(status) {
+  if (!pomodoroStatusEl) return;
+  if (!status || !status.active) {
+    pomodoroStatusEl.textContent = '未运行';
+    pomodoroStatusEl.classList.remove('running');
+    return;
+  }
+  const s = Math.max(Number(status.remainingSeconds) || 0, 0);
+  const mm = String(Math.floor(s / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  const phaseText = status.phase === 'work' ? '专注' : '休息';
+  pomodoroStatusEl.textContent = `${phaseText} ${mm}:${ss} · 第${(status.cycleIndex || 0) + 1}/${status.cycles}轮`;
+  pomodoroStatusEl.classList.add('running');
+}
+
+/** 渲染系统区（自启动 / 大字模式开关） */
+function renderSystem() {
+  if (!currentState) return;
+  autoLaunchCheck.checked = !!currentState.autoLaunch;
+  bigtextBtn.textContent = currentState.bigTextMode ? '关闭大字模式' : '大字模式';
+  bigtextBtn.classList.toggle('active', !!currentState.bigTextMode);
+}
+
 /** 根据当前状态刷新整个界面 */
 function render() {
   if (!currentState) return;
   const s = currentState;
 
-  // 应用主题（深色冷青 / 浅色暖红）
   applyTheme(s.theme);
 
-  // 编辑模式下不要覆盖设置页（保持输入框焦点和内容）
   if (editing || editingCategoryTexts || alarmEditing) {
     return;
   }
 
-  // 未配置 → 显示设置引导页（占满窗口）
+  // 未配置 → 显示目标设置页
   if (!s.configured) {
     setupView.classList.remove('hidden');
     stage.classList.add('hidden');
     cancelEditBtn.classList.add('hidden');
-    // 设置页需要完整高度，展开窗口
     window.api.setPanelOpen(true);
     return;
   }
@@ -657,51 +782,36 @@ function render() {
   setupView.classList.add('hidden');
   stage.classList.remove('hidden');
 
-  // 含义文字（突出显示，为空时用默认文案）
-  const rawMessage = s.message && s.message.trim()
-    ? s.message
-    : '距离完成还有 X 天';
-  messageText.textContent = renderMessage(rawMessage, s.remainingDays);
+  // 含义文字（countup 默认「已坚持 X 天」，countdown 默认「距离完成还有 X 天」）
+  messageText.textContent = renderMessage(s.message, s.remainingDays);
 
-  // 剩余天数（大字 + 悬浮条小字）
-  // 根据显示方式：days 显示纯数字 + 「天」单位；months/years 显示完整文本（如「3个月10天」）
+  // 剩余/坚持天数（大字 + 悬浮条小字）
   const displayMode = s.displayMode || 'days';
   if (displayMode === 'days') {
     remainingDaysEl.textContent = String(s.remainingDays);
     remainingDaysEl.classList.remove('is-text');
     numberUnitEl.textContent = '天';
-    floatDaysEl.textContent = String(s.remainingDays);
-    floatDaysEl.classList.remove('is-text');
-    floatUnitEl.textContent = '天';
-    floatUnitEl.classList.remove('hidden');
   } else {
     remainingDaysEl.textContent = s.remainingText || '';
     remainingDaysEl.classList.add('is-text');
     numberUnitEl.textContent = '';
-    floatDaysEl.textContent = s.remainingText || '';
-    floatDaysEl.classList.add('is-text');
-    floatUnitEl.textContent = '';
-    floatUnitEl.classList.add('hidden');
   }
 
-  // 待办
+  renderFloatBar();
+  renderTargets();
+  renderStreak();
   renderTodos();
-
-  // 类目选择条
   renderCategories();
-
-  // 闹钟列表
   renderAlarms();
-
-  // 悬浮条闹钟时间（常驻显示最近闹钟，无需展开面板）
   renderFloatAlarm();
+  renderPomodoroSettings();
+  renderSystem();
 
-  // 打卡按钮状态（悬浮条 + 下拉面板两处同步），按「当前类目今日是否已打卡」判定
-  const isDone = s.remainingDays <= 0;
+  // 打卡按钮状态（悬浮条 + 下拉面板两处同步）
+  const isDone = !s.isCountup && s.remainingDays <= 0;
   const eliminated = s.currentCategoryCheckedToday;
   const catName = (s.currentCategory && s.currentCategory.name) || '打卡';
 
-  // 按钮文案：优先用户自定义，为空则回退默认（活跃态=打卡·类目名）
   const activeText = (s.btnActiveText && s.btnActiveText.trim()) || `打卡·${catName}`;
   const floatActiveText = (s.btnActiveText && s.btnActiveText.trim()) || `打卡·${truncateCategoryName(catName)}`;
   const doneText = (s.btnDoneText && s.btnDoneText.trim()) || '已打卡';
@@ -726,7 +836,7 @@ function render() {
   applyBtnState(floatEliminateBtn, floatActiveText);
 }
 
-// ---------- 粒子动画（克制、柔和） ----------
+// ---------- 粒子动画 ----------
 
 function spawnParticles(anchorEl) {
   const rect = anchorEl.getBoundingClientRect();
@@ -761,32 +871,50 @@ function spawnParticles(anchorEl) {
 
 // ---------- 事件处理 ----------
 
-/** 保存设置 */
+/** 切换正计时/倒计时字段显示 */
+function updateCountModeFields() {
+  const isCountup = countModeSelect.value === 'countup';
+  targetDateField.classList.toggle('hidden', isCountup);
+  startDateField.classList.toggle('hidden', !isCountup);
+  displayModeField.classList.toggle('hidden', isCountup);
+}
+
+/** 保存目标（新建/编辑统一走 updateTarget） */
 async function handleSaveSettings() {
-  const targetDate = targetDateInput.value;
+  const name = targetNameInput.value.trim() || '我的目标';
+  const countMode = countModeSelect.value === 'countup' ? 'countup' : 'countdown';
+  const payload = { name, countMode };
 
-  if (!targetDate) {
-    setupError.textContent = '请选择目标日期';
-    return;
+  if (countMode === 'countup') {
+    const startDate = startDateInput.value;
+    if (startDate && isFutureDate(startDate)) {
+      setupError.textContent = '起点日期不能是未来';
+      return;
+    }
+    payload.startDate = startDate;
+  } else {
+    const targetDate = targetDateInput.value;
+    if (!targetDate) {
+      setupError.textContent = '请选择目标日期';
+      return;
+    }
+    const days = daysUntilLocal(targetDate);
+    if (days <= 0) {
+      setupError.textContent = '目标日期必须是未来的日期';
+      return;
+    }
+    payload.targetDate = targetDate;
+    payload.totalDays = days;
+    payload.displayMode = displayModeSelect.value;
   }
 
-  const days = daysUntilLocal(targetDate);
-  if (days <= 0) {
-    setupError.textContent = '目标日期必须是未来的日期';
-    return;
-  }
-
-  const displayMode = displayModeSelect.value;
-  const theme = themeSelect.value === 'dark' ? 'dark' : 'light';
-  const result = await window.api.saveSettings({ targetDate, totalDays: days, displayMode, theme });
+  const result = await window.api.updateTarget(currentState.currentTarget.id, payload);
 
   if (result.ok) {
     currentState = result.view;
     editing = false;
     setupError.textContent = '';
     cancelEditBtn.classList.add('hidden');
-    displayModeSelect.value = currentState.displayMode || 'days';
-    // 保存成功回到主界面，收起窗口（只保留悬浮条）
     window.api.setPanelOpen(false);
     render();
   } else {
@@ -794,24 +922,23 @@ async function handleSaveSettings() {
   }
 }
 
-/** 对当前选中类目打卡（悬浮条和下拉面板共用） */
+/** 对当前目标的当前类目打卡 */
 async function handleEliminate() {
   if (isAnimating || !currentState) return;
   if (!currentState.configured || currentState.currentCategoryCheckedToday) return;
-  if (currentState.remainingDays <= 0) return;
+  if (!currentState.isCountup && currentState.remainingDays <= 0) return;
   if (!currentState.currentCategory) return;
 
   isAnimating = true;
   eliminateBtn.disabled = true;
   floatEliminateBtn.disabled = true;
 
-  const result = await window.api.eliminateCategory(currentState.currentCategoryId);
+  const result = await window.api.checkinCategory(currentState.currentTarget.id, currentState.currentCategoryId);
 
   if (result.ok) {
     currentState = result.view;
     render();
 
-    // 仪式感动效：数字跳动 + 柔和粒子
     spawnParticles(floatEliminateBtn);
     remainingDaysEl.classList.remove('bounce');
     void remainingDaysEl.offsetWidth;
@@ -825,15 +952,15 @@ async function handleEliminate() {
   isAnimating = false;
 }
 
-/** 重置历史记录 */
+/** 重置当前目标的历史记录 */
 async function handleResetHistory() {
   if (!currentState || !currentState.configured) return;
   if (currentState.history.length === 0) return;
 
-  const confirmed = window.confirm('确定要清空所有历史打卡记录吗？剩余天数将恢复为总天数。');
+  const confirmed = window.confirm('确定要清空当前目标的所有打卡记录吗？剩余天数将恢复为总天数。');
   if (!confirmed) return;
 
-  const result = await window.api.resetHistory();
+  const result = await window.api.resetHistory(currentState.currentTarget.id);
   if (result.ok) {
     currentState = result.view;
     render();
@@ -858,41 +985,57 @@ function updateTargetDateHint() {
   }
 }
 
-/** 进入编辑模式（显示设置页） */
+/** 进入目标编辑模式（显示目标设置页） */
 function handleEditSettings() {
   if (!currentState) return;
   editing = true;
-  // 回显目标日期：优先用存储的 targetDate，否则由 totalDays 反推
-  const targetDate = currentState.targetDate || addDaysToToday(currentState.totalDays || 0);
-  targetDateInput.value = targetDate;
+
+  const target = currentState.currentTarget || {};
+  setupTitle.textContent = currentState.configured ? '编辑目标' : '新建目标';
+  targetNameInput.value = target.name || '我的目标';
+  countModeSelect.value = currentState.isCountup ? 'countup' : 'countdown';
+
+  targetDateInput.value = currentState.targetDate ||
+    (currentState.isCountup ? '' : addDaysToToday(currentState.totalDays || 0));
+  startDateInput.value = currentState.startDate || '';
+  updateCountModeFields();
   updateTargetDateHint();
+
   displayModeSelect.value = currentState.displayMode || 'days';
   themeSelect.value = currentState.theme === 'dark' ? 'dark' : 'light';
   setupError.textContent = '';
   cancelEditBtn.classList.remove('hidden');
   setupView.classList.remove('hidden');
   stage.classList.add('hidden');
-  // 设置页需要完整高度，展开窗口
   window.api.setPanelOpen(true);
 }
 
 /** 取消编辑，返回主界面 */
-function handleCancelEdit() {
+async function handleCancelEdit() {
   editing = false;
-  cancelEditBtn.classList.add('hidden');
   setupError.textContent = '';
-  // 回到主界面，收起窗口（只保留悬浮条）
+  // 若当前目标未配置且存在其它已配置目标，切回第一个已配置目标，避免卡在设置页
+  if (!currentState.configured && currentState.targets && currentState.targets.length > 1) {
+    const fallback = currentState.targets.find(
+      (t) => t.id !== currentState.currentTargetId && t.configured
+    );
+    if (fallback) {
+      const result = await window.api.setCurrentTarget(fallback.id);
+      if (result.ok) currentState = result.view;
+    }
+  }
+  cancelEditBtn.classList.add('hidden');
   window.api.setPanelOpen(false);
   render();
 }
 
-/** 新增待办（默认挂到当前选中类目） */
+/** 新增待办（挂到当前类目） */
 async function handleAddTodo() {
   if (!currentState || !currentState.configured) return;
   const text = todoInput.value.trim();
   if (!text) return;
 
-  const result = await window.api.addTodo(text, currentState.currentCategoryId);
+  const result = await window.api.addTodo(currentState.currentTarget.id, text, currentState.currentCategoryId);
   if (result.ok) {
     currentState = result.view;
     todoInput.value = '';
@@ -900,28 +1043,25 @@ async function handleAddTodo() {
   }
 }
 
-/** 切换待办完成状态 */
 async function handleToggleTodo(id) {
-  const result = await window.api.toggleTodo(id);
+  const result = await window.api.toggleTodo(currentState.currentTarget.id, id);
   if (result.ok) {
     currentState = result.view;
     render();
   }
 }
 
-/** 删除待办 */
 async function handleDeleteTodo(id) {
-  const result = await window.api.deleteTodo(id);
+  const result = await window.api.deleteTodo(currentState.currentTarget.id, id);
   if (result.ok) {
     currentState = result.view;
     render();
   }
 }
 
-/** 新建类目 */
 async function handleCreateCategory(name) {
   if (!currentState) return;
-  const result = await window.api.createCategory(name);
+  const result = await window.api.createCategory(currentState.currentTarget.id, name);
   if (result.ok) {
     currentState = result.view;
     render();
@@ -931,10 +1071,9 @@ async function handleCreateCategory(name) {
   }
 }
 
-/** 重命名类目 */
 async function handleRenameCategory(id, name) {
   if (!currentState) return;
-  const result = await window.api.renameCategory(id, name);
+  const result = await window.api.renameCategory(currentState.currentTarget.id, id, name);
   if (result.ok) {
     currentState = result.view;
     render();
@@ -944,14 +1083,13 @@ async function handleRenameCategory(id, name) {
   }
 }
 
-/** 删除类目（需二次确认：会连同其打卡与待办一起清除） */
 async function handleDeleteCategory(id) {
   if (!currentState) return;
   const cat = (currentState.categories || []).find((c) => c.id === id);
   if (!cat) return;
   const confirmed = window.confirm(`确定删除类目「${cat.name}」吗？\n会同时清除该类目的待办与打卡记录。`);
   if (!confirmed) return;
-  const result = await window.api.deleteCategory(id);
+  const result = await window.api.deleteCategory(currentState.currentTarget.id, id);
   if (result.ok) {
     currentState = result.view;
     render();
@@ -960,19 +1098,53 @@ async function handleDeleteCategory(id) {
   }
 }
 
-/** 切换当前类目 */
 async function handleSelectCategory(id) {
   if (!currentState || currentState.currentCategoryId === id) return;
-  const result = await window.api.setCurrentCategory(id);
+  const result = await window.api.setCurrentCategory(currentState.currentTarget.id, id);
   if (result.ok) {
     currentState = result.view;
     render();
   }
 }
 
+// ---------- 目标 CRUD ----------
+
+async function handleSelectTarget(id) {
+  if (!currentState || currentState.currentTargetId === id) return;
+  const result = await window.api.setCurrentTarget(id);
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  }
+}
+
+async function handleCreateTarget() {
+  const result = await window.api.createTarget({ name: '新目标' });
+  if (result.ok) {
+    currentState = result.view;
+    render();
+    handleEditSettings();
+  } else {
+    window.alert(result.error || '创建失败');
+  }
+}
+
+async function handleDeleteTarget(id) {
+  const t = (currentState.targets || []).find((x) => x.id === id);
+  if (!t) return;
+  const confirmed = window.confirm(`确定删除目标「${t.name}」吗？\n会同时清除该目标的所有打卡与待办记录。`);
+  if (!confirmed) return;
+  const result = await window.api.deleteTarget(id);
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  } else {
+    window.alert(result.error || '删除失败');
+  }
+}
+
 // ---------- 类目文案编辑浮层 ----------
 
-/** 打开类目文案编辑浮层，回显该类目当前的文案 */
 function openCategoryTextEditor(id) {
   if (!currentState) return;
   const cat = (currentState.categories || []).find((c) => c.id === id);
@@ -988,14 +1160,12 @@ function openCategoryTextEditor(id) {
   categoryEditView.classList.remove('hidden');
   stage.classList.add('hidden');
   setupView.classList.add('hidden');
-  // 浮层需要完整高度，展开窗口
   window.api.setPanelOpen(true);
 }
 
-/** 保存类目文案 */
 async function handleSaveCategoryTexts() {
   if (!currentState || !editingCategoryId) return;
-  const result = await window.api.updateCategoryTexts(editingCategoryId, {
+  const result = await window.api.updateCategoryTexts(currentState.currentTarget.id, editingCategoryId, {
     message: categoryMessageInput.value,
     btnActiveText: categoryActiveTextInput.value,
     btnDoneText: categoryDoneTextInput.value
@@ -1010,14 +1180,76 @@ async function handleSaveCategoryTexts() {
   }
 }
 
-/** 关闭类目文案编辑浮层，返回主界面 */
 function closeCategoryTextEditor() {
   editingCategoryTexts = false;
   editingCategoryId = '';
   categoryEditView.classList.add('hidden');
   stage.classList.remove('hidden');
-  // 回到主界面，收起窗口（只保留悬浮条）
   window.api.setPanelOpen(false);
+}
+
+// ---------- 番茄钟 / 系统 ----------
+
+async function handleOpenPomodoro() {
+  await window.api.openPomodoro();
+}
+
+async function handleStartPomodoro() {
+  const workMin = Number(pomodoroWorkInput.value) || 25;
+  const breakMin = Number(pomodoroBreakInput.value) || 5;
+  const cycles = Number(pomodoroCyclesInput.value) || 4;
+
+  await window.api.updatePomodoroSettings({ workMin, breakMin, cycles });
+  const result = await window.api.startPomodoro({ workMin, breakMin, cycles });
+  if (result.ok && result.status) {
+    renderPomodoroStatus(result.status);
+  }
+}
+
+async function handleBackup() {
+  const result = await window.api.backupData();
+  if (result.ok) {
+    window.alert('备份成功：\n' + result.path);
+  } else if (result.error && result.error !== '已取消') {
+    window.alert(result.error || '备份失败');
+  }
+}
+
+async function handleRestore() {
+  const picked = await window.api.pickRestoreFile();
+  if (!picked.ok) {
+    if (picked.error && picked.error !== '已取消') window.alert(picked.error || '选择失败');
+    return;
+  }
+  const confirmed = window.confirm(`确定用备份文件「${picked.fileName}」恢复数据吗？\n当前数据将被覆盖。`);
+  if (!confirmed) return;
+  const result = await window.api.applyRestore();
+  if (result.ok) {
+    currentState = result.view;
+    render();
+    window.alert('恢复成功');
+  } else {
+    window.alert(result.error || '恢复失败');
+  }
+}
+
+async function handleToggleAutoLaunch() {
+  const result = await window.api.setAutoLaunch(autoLaunchCheck.checked);
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  } else {
+    window.alert(result.error || '设置失败');
+    autoLaunchCheck.checked = !autoLaunchCheck.checked;
+  }
+}
+
+async function handleToggleBigText() {
+  const result = await window.api.toggleBigText();
+  if (result.ok) {
+    currentState = result.view;
+    render();
+  }
 }
 
 // ---------- 初始化 ----------
@@ -1037,7 +1269,6 @@ async function init() {
     if (!currentState || editing || editingCategoryTexts || alarmEditing) return;
     const hasActiveAlarm = (currentState.alarms || []).some((a) => a.active);
     if (!hasActiveAlarm) return;
-    // 重算剩余秒数（基于 endsAt）
     const now = Date.now();
     const alarms = currentState.alarms.map((a) => {
       if (a.type === 'countdown') {
@@ -1051,9 +1282,7 @@ async function init() {
   }, 1000);
 }
 
-// ---------- 无边框窗口拖动（替代 -webkit-app-region: drag） ----------
-// 用 setPointerCapture 捕获指针，鼠标移出窗口也能持续收到 mousemove/mouseup，
-// 通过 IPC 把增量位移发给主进程移动窗口。这样避免 drag region 吞掉输入框焦点。
+// ---------- 无边框窗口拖动 ----------
 
 function attachDrag(el) {
   if (!el) return;
@@ -1063,7 +1292,7 @@ function attachDrag(el) {
   let lastY = 0;
   let startX = 0;
   let startY = 0;
-  let pendingDx = 0;   // 待发送的累计位移
+  let pendingDx = 0;
   let pendingDy = 0;
   let rafId = null;
 
@@ -1077,10 +1306,7 @@ function attachDrag(el) {
     window.api.dragWindow({ dx, dy });
   };
 
-  // 用 pointerdown（有正确的 pointerId），setPointerCapture 才能真正生效，
-  // 鼠标快速移出窗口也能持续收到 pointermove，避免「卡顿、不跟手」。
   el.addEventListener('pointerdown', (e) => {
-    // 只有鼠标左键且目标不在可编辑元素上才触发拖动
     if (e.button !== 0) return;
     if (e.target.closest('input, button, select, textarea, [contenteditable]')) return;
 
@@ -1094,19 +1320,17 @@ function attachDrag(el) {
     try {
       el.setPointerCapture(e.pointerId);
     } catch (err) {
-      // 忽略捕获失败，仍可继续拖动
+      // 忽略捕获失败
     }
   });
 
   el.addEventListener('pointermove', (e) => {
     if (!dragging) return;
-    // 累计增量位移，交给 rAF 每帧合并发送，避免高频 IPC
     pendingDx += e.screenX - lastX;
     pendingDy += e.screenY - lastY;
     lastX = e.screenX;
     lastY = e.screenY;
 
-    // 累计位移超过阈值 → 判定为「拖动」，抑制后续的 click 切换
     if (Math.abs(e.screenX - startX) > 4 || Math.abs(e.screenY - startY) > 4) {
       didDrag = true;
     }
@@ -1119,7 +1343,6 @@ function attachDrag(el) {
   const stopDrag = (e) => {
     if (!dragging) return;
     dragging = false;
-    // 结束前把最后累积的位移发出，保证窗口落到位
     flush();
     if (e && e.pointerId !== undefined && el.hasPointerCapture && el.hasPointerCapture(e.pointerId)) {
       try {
@@ -1128,7 +1351,6 @@ function attachDrag(el) {
         // 忽略
       }
     }
-    // 拖动结束后，短暂保留 didDrag 标记以抑制本次 click，随后重置
     setTimeout(() => {
       didDrag = false;
     }, 0);
@@ -1148,12 +1370,18 @@ function attachDrag(el) {
 attachDrag(document.querySelector('.float-drag'));
 attachDrag(document.querySelector('.setup-drag'));
 attachDrag(document.querySelector('#category-edit-view .setup-drag'));
+attachDrag(document.querySelector('#alarm-edit-view .setup-drag'));
+
+// ---------- 事件绑定 ----------
 
 saveSettingsBtn.addEventListener('click', handleSaveSettings);
 cancelEditBtn.addEventListener('click', handleCancelEdit);
 saveCategoryTextsBtn.addEventListener('click', handleSaveCategoryTexts);
 cancelCategoryTextsBtn.addEventListener('click', closeCategoryTextEditor);
+
 targetDateInput.addEventListener('change', updateTargetDateHint);
+countModeSelect.addEventListener('change', updateCountModeFields);
+
 // 主题切换即时预览（不依赖保存）
 themeSelect.addEventListener('change', async () => {
   const theme = themeSelect.value === 'dark' ? 'dark' : 'light';
@@ -1163,8 +1391,10 @@ themeSelect.addEventListener('change', async () => {
     currentState = result.view;
   }
 });
-// 目标日期不能早于今天
+
 targetDateInput.min = toDateStr(new Date());
+startDateInput.max = toDateStr(new Date());
+
 eliminateBtn.addEventListener('click', handleEliminate);
 floatEliminateBtn.addEventListener('click', handleEliminate);
 resetHistoryBtn.addEventListener('click', handleResetHistory);
@@ -1180,6 +1410,7 @@ todoInput.addEventListener('keydown', (e) => {
 todoCalendarToggle.addEventListener('click', handleToggleCalendar);
 
 categoryAdd.addEventListener('click', startCreateCategory);
+targetAdd.addEventListener('click', handleCreateTarget);
 
 // 闹钟相关事件
 alarmAddBtn.addEventListener('click', openAlarmEditor);
@@ -1193,14 +1424,21 @@ alarmDurationInput.addEventListener('keydown', (e) => {
     handleSaveAlarm();
   }
 });
-attachDrag(document.querySelector('#alarm-edit-view .setup-drag'));
 
-// 主进程通知：闹钟触发 → 悬浮条闪烁
+// 番茄钟 / 系统
+pomodoroOpenBtn.addEventListener('click', handleOpenPomodoro);
+pomodoroStartBtn.addEventListener('click', handleStartPomodoro);
+backupBtn.addEventListener('click', handleBackup);
+restoreBtn.addEventListener('click', handleRestore);
+bigtextBtn.addEventListener('click', handleToggleBigText);
+autoLaunchCheck.addEventListener('change', handleToggleAutoLaunch);
+
+// 主进程通知：闹钟触发
 window.api.onAlarmTriggered(() => {
   handleAlarmTriggered();
 });
 
-// 主进程通知：闹钟列表更新（单次闹钟自动停用）
+// 主进程通知：闹钟列表更新
 window.api.onAlarmsUpdated((view) => {
   if (view) {
     currentState = view;
@@ -1208,14 +1446,19 @@ window.api.onAlarmsUpdated((view) => {
   }
 });
 
+// 主进程通知：番茄钟 tick
+window.api.onPomodoroTick((status) => {
+  renderPomodoroStatus(status);
+});
+
 // 点击悬浮条（消除按钮除外）切换下拉面板；拖动后不切换
 floatBar.addEventListener('click', (e) => {
-  if (didDrag) return;                    // 刚拖动过，不切换
-  if (e.target.closest('.float-eliminate')) return; // 消除按钮独立处理
+  if (didDrag) return;
+  if (e.target.closest('.float-eliminate')) return;
   togglePanel();
 });
 
-// 右键弹出系统菜单（最小化 / 关闭 / 退出）
+// 右键弹出系统菜单
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   window.api.showContextMenu();

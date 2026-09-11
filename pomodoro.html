@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>番茄钟</title>
+  <link rel="stylesheet" href="pomodoro.css" />
+</head>
+<body>
+  <div class="pomodoro-card">
+    <div class="pomodoro-drag" id="pomodoro-drag">
+      <span class="pomodoro-title">🍅 番茄钟</span>
+      <button class="pomodoro-close" id="pomodoro-close" type="button" aria-label="关闭">×</button>
+    </div>
+
+    <div class="pomodoro-phase" id="pomodoro-phase">番茄钟</div>
+    <div class="pomodoro-time" id="pomodoro-time">25:00</div>
+    <div class="pomodoro-cycle" id="pomodoro-cycle">共 4 轮</div>
+
+    <div class="pomodoro-settings">
+      <label class="pomodoro-field">
+        <span>专注</span>
+        <input id="pomodoro-work" type="number" min="1" max="180" step="1" />
+        <span>分</span>
+      </label>
+      <label class="pomodoro-field">
+        <span>休息</span>
+        <input id="pomodoro-break" type="number" min="1" max="60" step="1" />
+        <span>分</span>
+      </label>
+      <label class="pomodoro-field">
+        <span>循环</span>
+        <input id="pomodoro-cycles" type="number" min="1" max="12" step="1" />
+        <span>次</span>
+      </label>
+    </div>
+
+    <div class="pomodoro-actions">
+      <button class="pomodoro-btn primary" id="pomodoro-start" type="button">开始</button>
+      <button class="pomodoro-btn ghost" id="pomodoro-stop" type="button">停止</button>
+    </div>
+  </div>
+
+  <script src="pomodoro.js"></script>
+</body>
+</html>

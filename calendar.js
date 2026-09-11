@@ -10,10 +10,13 @@
 
 const $ = (selector) => document.querySelector(selector);
 
+let isDark = false; // 主题是否为深色
+
 // 应用主题（跟随主窗口）
 const _calTheme = new URLSearchParams(window.location.search).get('theme');
 if (_calTheme === 'dark') {
   document.body.classList.add('theme-dark');
+  isDark = true;
 }
 
 // ---------- DOM 引用 ----------
@@ -26,6 +29,13 @@ const calNext = $('#cal-next');
 const calClose = $('#calendar-close');
 const dragEl = $('#calendar-drag');
 
+// 统计区 DOM
+const statsWeekBtn = $('#stats-week-btn');
+const statsMonthBtn = $('#stats-month-btn');
+const statsBarCanvas = $('#stats-bar-canvas');
+const statsDonutCanvas = $('#stats-donut-canvas');
+const statsLegendEl = $('#stats-legend');
+
 // ---------- 状态 ----------
 let cursor = new Date(); // 当前显示的月份（取当月 1 号）
 let selected = null;     // 选中的日期字符串 YYYY-MM-DD
@@ -34,6 +44,8 @@ let checkinByDate = {};  // { "YYYY-MM-DD": "HH:MM:SS" } 天级打卡（仅用�
 let categories = [];     // 类目列表 [{ id, name, color, createdAt }]
 let categoryById = {};   // { catId: { name, color } }
 let checkinsByDate = {}; // { "YYYY-MM-DD": { catId: { time, timestamp } } } 类目级打卡
+let statsData = null;    // 统计汇总（由 get-calendar-overview 返回）
+let statsMode = 'week';  // 'week' | 'month'
 
 // ---------- 工具 ----------
 function toDateStr(date) {
@@ -221,6 +233,61 @@ function changeMonth(delta) {
   renderGrid();
 }
 
+// ---------- 统计区渲染 ----------
+
+/** 渲染类目分布图例 */
+function renderStatsLegend() {
+  statsLegendEl.innerHTML = '';
+  const items = (statsData && statsData.categoryDist) || [];
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'cal-detail-empty';
+    empty.textContent = '暂无类目数据';
+    statsLegendEl.appendChild(empty);
+    return;
+  }
+  items.forEach((it) => {
+    const row = document.createElement('div');
+    row.className = 'stats-legend-item';
+
+    const dot = document.createElement('span');
+    dot.className = 'stats-legend-dot';
+    dot.style.background = it.color || '#c2c7d1';
+
+    const name = document.createElement('span');
+    name.className = 'stats-legend-name';
+    name.textContent = it.name;
+
+    const count = document.createElement('span');
+    count.className = 'stats-legend-count';
+    count.textContent = String(it.count || 0);
+
+    row.appendChild(dot);
+    row.appendChild(name);
+    row.appendChild(count);
+    statsLegendEl.appendChild(row);
+  });
+}
+
+/** 重绘统计图表（柱状图 + 环形图） */
+function renderStats() {
+  if (!window.CountdownStats || !statsData) return;
+
+  const bar = statsMode === 'week' ? statsData.weekly : statsData.monthly;
+  window.CountdownStats.drawBarChart(statsBarCanvas, bar, statsMode, isDark);
+  window.CountdownStats.drawDonut(statsDonutCanvas, statsData.categoryDist || [], isDark);
+  renderStatsLegend();
+
+  statsWeekBtn.classList.toggle('active', statsMode === 'week');
+  statsMonthBtn.classList.toggle('active', statsMode === 'month');
+}
+
+function switchStatsMode(mode) {
+  if (statsMode === mode) return;
+  statsMode = mode;
+  renderStats();
+}
+
 // ---------- 无边框窗口拖动 ----------
 function attachDrag(el) {
   if (!el) return;
@@ -303,6 +370,7 @@ async function init() {
     todoDates = overview.todoDates || {};
     categories = overview.categories || [];
     checkinsByDate = overview.checkinsByDate || {};
+    statsData = overview.stats || null;
 
     categoryById = {};
     categories.forEach((c) => {
@@ -322,11 +390,14 @@ async function init() {
 
   renderGrid();
   renderDetail();
+  renderStats();
 }
 
 calPrev.addEventListener('click', () => changeMonth(-1));
 calNext.addEventListener('click', () => changeMonth(1));
 calClose.addEventListener('click', () => window.api.closeCalendar());
+statsWeekBtn.addEventListener('click', () => switchStatsMode('week'));
+statsMonthBtn.addEventListener('click', () => switchStatsMode('month'));
 attachDrag(dragEl);
 
 // 右键弹出系统菜单（最小化 / 关闭 / 退出）
