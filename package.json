@@ -1,6 +1,6 @@
 {
   "name": "countdown-app",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "倒计时桌面应用 —— 多目标倒数/正计时 + 番茄钟 + 连续打卡",
   "main": "main.js",
   "author": "Kou",

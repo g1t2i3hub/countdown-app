@@ -146,6 +146,7 @@
       <select id="theme-select" class="input select">
         <option value="light">浅色 · 暖红</option>
         <option value="dark">深色 · 冷青</option>
+        <option value="green">护眼 · 绿色</option>
       </select>
     </label>
 
@@ -200,11 +201,29 @@
              placeholder="如：起来活动一下 / 喝水" autocomplete="off" maxlength="20" />
     </label>
 
-    <label class="field" id="alarm-countdown-field">
-      <span class="field-label">倒计时时长（分钟）</span>
-      <input id="alarm-duration-input" class="input" type="number" min="1" max="720"
-             placeholder="如：25" autocomplete="off" />
-    </label>
+    <div class="field" id="alarm-countdown-field">
+      <div class="alarm-sub-tabs">
+        <button class="alarm-sub-tab active" id="alarm-subtab-relative" type="button">相对时长</button>
+        <button class="alarm-sub-tab" id="alarm-subtab-absolute" type="button">指定日期时间</button>
+      </div>
+
+      <label class="field" id="alarm-relative-field">
+        <span class="field-label">倒计时时长（分钟）</span>
+        <input id="alarm-duration-input" class="input" type="number" min="1" max="720"
+               placeholder="如：25" autocomplete="off" />
+      </label>
+
+      <div class="field hidden" id="alarm-absolute-field">
+        <label class="field">
+          <span class="field-label">日期</span>
+          <input id="alarm-date-input" class="input" type="date" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span class="field-label">时间</span>
+          <input id="alarm-time-absolute-input" class="input" type="time" />
+        </label>
+      </div>
+    </div>
 
     <label class="field hidden" id="alarm-fixed-field">
       <span class="field-label">提醒时刻</span>

@@ -11,6 +11,8 @@ const label = params.get('label') || '时间到了';
 const theme = params.get('theme') || 'light';
 if (theme === 'dark') {
   document.body.classList.add('theme-dark');
+} else if (theme === 'green') {
+  document.body.classList.add('theme-green');
 }
 document.getElementById('alarm-label').textContent = label;
 

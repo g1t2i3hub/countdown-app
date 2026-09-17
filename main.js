@@ -21,7 +21,7 @@ const { migrateV2toV3, computeStreakFromHistory } = require('./migrate');
  * 透明窗口让收起态看起来只是一个悬浮条，悬停时下拉面板在窗口内滑出。
  */
 const BAR_HEIGHT = 60;          // 悬浮条高度
-const WINDOW_SIZE = { width: 300, height: 640 };
+const WINDOW_SIZE = { width: 340, height: 640 };
 const CALENDAR_SIZE = { width: 380, height: 640 }; // 日历回看弹窗尺寸（v3 增加统计区）
 const POMODORO_SIZE = { width: 300, height: 300 }; // 番茄钟子窗口尺寸
 const SYSTEM_SIZE = { width: 280, height: 240 };   // 系统设置子窗口尺寸
@@ -40,7 +40,7 @@ const MAX_CATEGORY_NAME_LENGTH = 12;
 const DEFAULT_STATE = {
   schemaVersion: SCHEMA_VERSION, // 数据版本号
   currentTargetId: '',           // 当前选中目标 id
-  theme: 'light',                // 主题：'light'（浅色暖红）| 'dark'（深色冷青）
+  theme: 'light',                // 主题：'light'（浅色暖红）| 'dark'（深色冷青）| 'green'（护眼绿，半透明）
   targets: [],                   // 多目标数组（自包含），见 normalizeTarget
   alarms: [],                    // 闹钟列表（顶层全局）
   streak: { current: 0, longest: 0, lastCheckinDate: '' }, // 跨目标合并的连续打卡
@@ -247,7 +247,7 @@ function normalizeState(state) {
   s.targets = s.targets.map(normalizeTarget);
 
   if (!Array.isArray(s.alarms)) s.alarms = [];
-  if (s.theme !== 'dark' && s.theme !== 'light') s.theme = 'light';
+  if (s.theme !== 'dark' && s.theme !== 'light' && s.theme !== 'green') s.theme = 'light';
 
   if (!s.streak || typeof s.streak !== 'object' || Array.isArray(s.streak)) {
     s.streak = { current: 0, longest: 0, lastCheckinDate: '' };
@@ -621,7 +621,7 @@ function buildViewModel(state) {
 
   // 顶层字段
   const base = {
-    theme: state.theme === 'dark' ? 'dark' : 'light',
+    theme: state.theme === 'dark' ? 'dark' : (state.theme === 'green' ? 'green' : 'light'),
     alarms: buildAlarms(state.alarms),
     streak: state.streak || { current: 0, longest: 0, lastCheckinDate: '' },
     pomodoro: state.pomodoro || { workMin: 25, breakMin: 5, cycles: 4 },
@@ -1435,7 +1435,7 @@ function registerIpcHandlers() {
   // 切换主题：仅更新主题字段
   ipcMain.handle('set-theme', (_event, theme) => {
     const state = readState();
-    state.theme = (theme === 'dark') ? 'dark' : 'light';
+    state.theme = (theme === 'dark' || theme === 'green') ? theme : 'light';
     writeState(state);
     return { ok: true, view: buildViewModel(state) };
   });
@@ -1820,20 +1820,42 @@ function registerIpcHandlers() {
 
     let alarm;
     if (type === 'countdown') {
-      const dur = Number(p.durationSeconds);
-      if (!Number.isInteger(dur) || dur <= 0) {
-        return { ok: false, error: '请设置有效的倒计时时长', view: buildViewModel(state) };
+      // 指定日期时间模式：renderer 传入 triggerAt（绝对时间戳），换算为 endsAt
+      if (p.triggerAt !== undefined && p.triggerAt !== null && p.triggerAt !== '') {
+        const endsAt = Number(p.triggerAt);
+        if (!Number.isFinite(endsAt) || endsAt <= Date.now()) {
+          return { ok: false, error: '提醒时间必须是未来的时间', view: buildViewModel(state) };
+        }
+        const d = new Date(endsAt);
+        const time = [d.getHours(), d.getMinutes()]
+          .map((n) => String(n).padStart(2, '0'))
+          .join(':');
+        alarm = {
+          id: generateId('alarm'),
+          type,
+          label,
+          repeat: 'once', // 指定日期时间仅支持一次性提醒
+          endsAt,
+          time,
+          active: true,
+          createdAt: Date.now()
+        };
+      } else {
+        const dur = Number(p.durationSeconds);
+        if (!Number.isInteger(dur) || dur <= 0) {
+          return { ok: false, error: '请设置有效的倒计时时长', view: buildViewModel(state) };
+        }
+        alarm = {
+          id: generateId('alarm'),
+          type,
+          label,
+          repeat,
+          endsAt: Date.now() + dur * 1000,
+          time: '',
+          active: true,
+          createdAt: Date.now()
+        };
       }
-      alarm = {
-        id: generateId('alarm'),
-        type,
-        label,
-        repeat,
-        endsAt: Date.now() + dur * 1000,
-        time: '',
-        active: true,
-        createdAt: Date.now()
-      };
     } else {
       const time = String(p.time || '').trim();
       if (!/^\d{1,2}:\d{2}$/.test(time)) {

@@ -17,6 +17,8 @@ const _calTheme = new URLSearchParams(window.location.search).get('theme');
 if (_calTheme === 'dark') {
   document.body.classList.add('theme-dark');
   isDark = true;
+} else if (_calTheme === 'green') {
+  document.body.classList.add('theme-green');
 }
 
 // ---------- DOM 引用 ----------

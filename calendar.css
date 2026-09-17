@@ -36,6 +36,22 @@ body.theme-dark {
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
 }
 
+body.theme-green {
+  --accent: #5f9d76;
+  --accent-strong: #4e8462;
+  --accent-soft: rgba(95, 157, 118, 0.16);
+  --bg: rgba(255, 255, 255, 0.82);
+  --bg-soft: rgba(250, 251, 250, 0.88);
+  --text: #2a322c;
+  --text-muted: #8a958d;
+  --text-faint: #b6c0b8;
+  --border: rgba(230, 238, 232, 0.8);
+  --border-strong: #c8d4ca;
+  --on-accent: #ffffff;
+  --scrollbar: #cfd8d0;
+  --shadow: 0 8px 24px rgba(31, 48, 36, 0.14);
+}
+
 * {
   margin: 0;
   padding: 0;

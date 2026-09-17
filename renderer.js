@@ -76,6 +76,12 @@ const alarmTabFixed = $('#alarm-tab-fixed');
 const alarmLabelInput = $('#alarm-label-input');
 const alarmCountdownField = $('#alarm-countdown-field');
 const alarmDurationInput = $('#alarm-duration-input');
+const alarmSubTabRelative = $('#alarm-subtab-relative');
+const alarmSubTabAbsolute = $('#alarm-subtab-absolute');
+const alarmRelativeField = $('#alarm-relative-field');
+const alarmAbsoluteField = $('#alarm-absolute-field');
+const alarmDateInput = $('#alarm-date-input');
+const alarmTimeAbsoluteInput = $('#alarm-time-absolute-input');
 const alarmFixedField = $('#alarm-fixed-field');
 const alarmTimeInput = $('#alarm-time-input');
 const alarmRepeatSelect = $('#alarm-repeat-select');
@@ -102,6 +108,7 @@ let categoryInputActive = false; // 是否正在内联输入类目名
 let editingCategoryTexts = false; // 类目文案浮层打开中
 let editingCategoryId = '';       // 正在编辑文案的类目 id
 let alarmType = 'countdown';      // 当前新建闹钟类型
+let alarmCountdownMode = 'relative'; // 倒计时子模式：relative（相对时长）| absolute（指定日期时间）
 let alarmEditing = false;         // 是否正在新建闹钟
 
 // ---------- 工具函数 ----------
@@ -408,8 +415,9 @@ function togglePanel() {
 /** 应用主题 */
 function applyTheme(theme) {
   document.body.classList.toggle('theme-dark', theme === 'dark');
+  document.body.classList.toggle('theme-green', theme === 'green');
   if (themeSelect) {
-    themeSelect.value = (theme === 'dark') ? 'dark' : 'light';
+    themeSelect.value = (theme === 'dark' || theme === 'green') ? theme : 'light';
   }
 }
 
@@ -483,6 +491,22 @@ function formatAlarmDuration(totalSeconds) {
   return `${sec}秒`;
 }
 
+/** 解析本地「YYYY-MM-DD HH:mm」为 Date；非法返回 null */
+function parseLocalDateTime(dateStr, timeStr) {
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+  const tm = /^(\d{1,2}):(\d{2})$/.exec(String(timeStr || ''));
+  if (!dm || !tm) return null;
+  const y = Number(dm[1]);
+  const mo = Number(dm[2]);
+  const d = Number(dm[3]);
+  const h = Number(tm[1]);
+  const min = Number(tm[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  const dt = new Date(y, mo - 1, d, h, min, 0, 0);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return dt;
+}
+
 /** 渲染闹钟列表 */
 function renderAlarms() {
   const alarms = currentState ? currentState.alarms || [] : [];
@@ -514,9 +538,11 @@ function renderAlarms() {
     const meta = document.createElement('div');
     meta.className = 'alarm-item-meta';
     if (alarm.type === 'countdown') {
-      meta.textContent = alarm.active
+      const remaining = alarm.active
         ? '剩余 ' + formatAlarmDuration(alarm.remainingSeconds || 0)
         : '已暂停';
+      // 指定日期时间模式的闹钟会带 time（HH:MM），展示时前置该时刻更直观
+      meta.textContent = alarm.time ? (alarm.time + ' · ' + remaining) : remaining;
     } else {
       const repeatText = alarm.repeat === 'daily' ? ' · 每天' : ' · 仅一次';
       meta.textContent = alarm.time + repeatText + (alarm.active ? '' : ' · 已暂停');
@@ -554,8 +580,11 @@ function openAlarmEditor() {
   alarmLabelInput.value = '';
   alarmDurationInput.value = '';
   alarmTimeInput.value = '';
+  alarmDateInput.value = '';
+  alarmTimeAbsoluteInput.value = '';
   alarmRepeatSelect.value = 'once';
   switchAlarmType('countdown');
+  switchAlarmCountdownMode('relative');
   stage.classList.add('hidden');
   setupView.classList.add('hidden');
   alarmEditView.classList.remove('hidden');
@@ -569,6 +598,35 @@ function switchAlarmType(type) {
   alarmTabFixed.classList.toggle('active', type === 'fixed');
   alarmCountdownField.classList.toggle('hidden', type !== 'countdown');
   alarmFixedField.classList.toggle('hidden', type !== 'fixed');
+  syncAlarmRepeatLock();
+}
+
+/** 切换倒计时的子模式：相对时长 / 指定日期时间 */
+function switchAlarmCountdownMode(mode) {
+  alarmCountdownMode = mode === 'absolute' ? 'absolute' : 'relative';
+  const absolute = alarmCountdownMode === 'absolute';
+  alarmSubTabRelative.classList.toggle('active', !absolute);
+  alarmSubTabAbsolute.classList.toggle('active', absolute);
+  alarmRelativeField.classList.toggle('hidden', absolute);
+  alarmAbsoluteField.classList.toggle('hidden', !absolute);
+  if (absolute) {
+    // 每次切换到「指定日期时间」时刷新最小日期，避免跨天后当天日期失效
+    alarmDateInput.min = toDateStr(new Date());
+  }
+  syncAlarmRepeatLock();
+}
+
+/** 依据当前类型 + 子模式同步「重复」下拉框的锁定状态（仅指定日期时间锁定为一次） */
+function syncAlarmRepeatLock() {
+  const locked = alarmType === 'countdown' && alarmCountdownMode === 'absolute';
+  if (locked) {
+    alarmRepeatSelect.value = 'once';
+    alarmRepeatSelect.disabled = true;
+    alarmRepeatSelect.title = '指定日期时间闹钟仅支持一次性提醒';
+  } else {
+    alarmRepeatSelect.disabled = false;
+    alarmRepeatSelect.title = '';
+  }
 }
 
 function closeAlarmEditor() {
@@ -585,12 +643,27 @@ async function handleSaveAlarm() {
 
   let payload;
   if (alarmType === 'countdown') {
-    const minutes = Number(alarmDurationInput.value);
-    if (!Number.isInteger(minutes) || minutes <= 0) {
-      alarmError.textContent = '请输入有效的倒计时时长（分钟）';
-      return;
+    if (alarmCountdownMode === 'absolute') {
+      const date = alarmDateInput.value;
+      const time = alarmTimeAbsoluteInput.value;
+      if (!date || !time) {
+        alarmError.textContent = '请选择提醒的日期和时间';
+        return;
+      }
+      const triggerDate = parseLocalDateTime(date, time);
+      if (!triggerDate || triggerDate.getTime() <= Date.now()) {
+        alarmError.textContent = '提醒时间必须是未来的日期时间';
+        return;
+      }
+      payload = { type: 'countdown', label, repeat: 'once', triggerAt: triggerDate.getTime() };
+    } else {
+      const minutes = Number(alarmDurationInput.value);
+      if (!Number.isInteger(minutes) || minutes <= 0) {
+        alarmError.textContent = '请输入有效的倒计时时长（分钟）';
+        return;
+      }
+      payload = { type: 'countdown', label, repeat, durationSeconds: minutes * 60 };
     }
-    payload = { type: 'countdown', label, repeat, durationSeconds: minutes * 60 };
   } else {
     const time = alarmTimeInput.value;
     if (!time) {
@@ -990,7 +1063,7 @@ function handleEditSettings() {
   updateTargetDateHint();
 
   displayModeSelect.value = currentState.displayMode || 'days';
-  themeSelect.value = currentState.theme === 'dark' ? 'dark' : 'light';
+  themeSelect.value = (currentState.theme === 'dark' || currentState.theme === 'green') ? currentState.theme : 'light';
   setupError.textContent = '';
   cancelEditBtn.classList.remove('hidden');
   setupView.classList.remove('hidden');
@@ -1330,7 +1403,7 @@ countModeSelect.addEventListener('change', updateCountModeFields);
 
 // 主题切换即时预览（不依赖保存）
 themeSelect.addEventListener('change', async () => {
-  const theme = themeSelect.value === 'dark' ? 'dark' : 'light';
+  const theme = (themeSelect.value === 'dark' || themeSelect.value === 'green') ? themeSelect.value : 'light';
   applyTheme(theme);
   const result = await window.api.setTheme(theme);
   if (result.ok) {
@@ -1340,6 +1413,7 @@ themeSelect.addEventListener('change', async () => {
 
 targetDateInput.min = toDateStr(new Date());
 startDateInput.max = toDateStr(new Date());
+alarmDateInput.min = toDateStr(new Date());
 
 eliminateBtn.addEventListener('click', handleEliminate);
 floatEliminateBtn.addEventListener('click', handleEliminate);
@@ -1362,8 +1436,27 @@ targetAdd.addEventListener('click', handleCreateTarget);
 alarmAddBtn.addEventListener('click', openAlarmEditor);
 alarmTabCountdown.addEventListener('click', () => switchAlarmType('countdown'));
 alarmTabFixed.addEventListener('click', () => switchAlarmType('fixed'));
+alarmSubTabRelative.addEventListener('click', () => switchAlarmCountdownMode('relative'));
+alarmSubTabAbsolute.addEventListener('click', () => switchAlarmCountdownMode('absolute'));
 saveAlarmBtn.addEventListener('click', handleSaveAlarm);
 cancelAlarmBtn.addEventListener('click', closeAlarmEditor);
+
+// 指定日期时间：点击弹出原生日历/时间选择器，同时屏蔽键盘直接输入
+function preventKeyboardEdit(input) {
+  // 阻止所有可改变值的按键（字符、数字、方向等），仅允许 Tab/Enter 等导航键
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' || e.key === 'Escape') return;
+    e.preventDefault();
+  });
+}
+alarmDateInput.addEventListener('click', () => {
+  if (typeof alarmDateInput.showPicker === 'function') alarmDateInput.showPicker();
+});
+alarmTimeAbsoluteInput.addEventListener('click', () => {
+  if (typeof alarmTimeAbsoluteInput.showPicker === 'function') alarmTimeAbsoluteInput.showPicker();
+});
+preventKeyboardEdit(alarmDateInput);
+preventKeyboardEdit(alarmTimeAbsoluteInput);
 alarmDurationInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();

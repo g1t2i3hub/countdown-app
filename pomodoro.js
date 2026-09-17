@@ -12,6 +12,8 @@ const $ = (selector) => document.querySelector(selector);
 const theme = new URLSearchParams(window.location.search).get('theme');
 if (theme === 'dark') {
   document.body.classList.add('theme-dark');
+} else if (theme === 'green') {
+  document.body.classList.add('theme-green');
 }
 
 // ---------- DOM ----------

@@ -26,6 +26,19 @@ body.theme-dark {
   --shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
 }
 
+body.theme-green {
+  --accent: #5f9d76;
+  --bg: rgba(255, 255, 255, 0.82);
+  --bg-soft: rgba(250, 251, 250, 0.88);
+  --bg-muted: rgba(240, 245, 240, 0.88);
+  --text: #2a322c;
+  --text-muted: #8a958d;
+  --border: rgba(230, 238, 232, 0.8);
+  --border-strong: #c8d4ca;
+  --accent-soft: rgba(95, 157, 118, 0.14);
+  --shadow: 0 16px 40px rgba(31, 48, 36, 0.16);
+}
+
 * {
   margin: 0;
   padding: 0;

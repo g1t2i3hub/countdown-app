@@ -16,6 +16,14 @@ body.theme-dark {
   --text-muted: #aab3c0;
 }
 
+body.theme-green {
+  --accent: #5f9d76;
+  --accent-strong: #4e8462;
+  --bg: rgba(255, 255, 255, 0.82);
+  --text: #2a322c;
+  --text-muted: #8a958d;
+}
+
 * {
   margin: 0;
   padding: 0;

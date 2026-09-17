@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   /** 读取应用状态（返回 buildViewModel 结果） */
   getState: () => ipcRenderer.invoke('get-state'),
 
-  /** 切换主题：'light' | 'dark'（不影响倒计时数据） */
+  /** 切换主题：'light' | 'dark' | 'green'（不影响倒计时数据） */
   setTheme: (theme) => ipcRenderer.invoke('set-theme', theme),
 
   // ---------- 目标 ----------
@@ -49,7 +49,7 @@ contextBridge.exposeInMainWorld('api', {
   deleteTodo: (targetId, id) => ipcRenderer.invoke('delete-todo', targetId, id),
 
   // ---------- 闹钟 ----------
-  /** 创建闹钟：{ type, label, repeat, durationSeconds, time } */
+  /** 创建闹钟：{ type, label, repeat, durationSeconds, time }；倒计时指定日期时间模式额外传 { triggerAt } */
   createAlarm: (payload) => ipcRenderer.invoke('create-alarm', payload),
   /** 删除闹钟 */
   deleteAlarm: (id) => ipcRenderer.invoke('delete-alarm', id),
